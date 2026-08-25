@@ -435,25 +435,23 @@ def show_profile(message):
 
 @bot.message_handler(func=lambda msg: msg.text == '🔗 Referal')
 def show_ref(message):
-  first_name = message.from_user.first_name
-  ref_link = f'https://t.me/{BOT_USERNAME}?start=r{message.from_user.id}'
+  user_id = message.from_user.id
+  u = get_user(user_id)
+  ref_link = f'https://t.me/{BOT_USERNAME}?start=r{user_id}'
 
   caption = (
-      f"✅ **Do'stingizni taklif qilish orqali ham ma'lum bir miqdorda"
-      f' daromat oling!**💰\n\n📍 [{first_name}](tg://user?id={message.from_user.id})'
-      " do'stingizdan havola-taklifnoma.\n\nDo'stingizni botimizga taklif"
-      " qiling agar do'stingiz bo'limidan hayvon sotib olsa sizning"
-      ' hisobingizga 10% miqdorda bonus taqdim etiladi 💸\n\n⚡️ **Boshlash uchun'
-      f' bosing:**\n{ref_link}'
+      f'🔗 **Sizning referal havolangiz:**\n\n`{ref_link}`\n\n'
+      f"✅ **Do'stingizni taklif qilish orqali daromad oling!** 💰\n\n"
+      f"Do'stingizni botimizga taklif qiling, agar u hayvon sotib olsa, "
+      f"sizning hisobingizga **10%** miqdorda bonus taqdim etiladi 💸\n\n"
+      f"👥 **Siz taklif qilgan do'stlar soni:** {u[1]} ta"
   )
 
   markup = types.InlineKeyboardMarkup()
   markup.row(
       types.InlineKeyboardButton(
-          '↗️ Ulashish',
-          switch_inline_query=(
-              f"Do'stingizni botimizga taklif qiling: {ref_link}"
-          ),
+          '↗️ Do\'stlarga ulashish',
+          url=f'https://t.me/share/url?url={ref_link}&text=Mening%20Fermam%20botiga%20qo%27shiling%20va%20daromad%20oling!',
       )
   )
 
