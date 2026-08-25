@@ -1,11 +1,28 @@
+import os
 import sqlite3
+import threading
 import time
+from flask import Flask
 import telebot
 from telebot import types
 
 API_TOKEN = '8802630482:AAG-_S2mNc2f5E8VbNz3XepoPLSzNEzVBSQ'
 BOT_USERNAME = 'Meningfeermam_bot'
 bot = telebot.TeleBot(API_TOKEN)
+
+# Render uchun kichik veb-server (Port xatoligining oldini olish uchun)
+app = Flask(__name__)
+
+
+@app.route('/')
+def home():
+  return 'Bot is running!'
+
+
+def run_web():
+  port = int(os.environ.get('PORT', 5000))
+  app.run(host='0.0.0.0', port=port)
+
 
 # SKRINSHOTLARDAGI ANIQ HAYVONLAR VA DAROMADLAR
 ANIMALS = {
@@ -125,7 +142,7 @@ def get_user(user_id, referrer_id=None):
       try:
         bot.send_message(
             ref_id,
-            "🎉 **Sizning referal havolangiz orqali yangi foydalanuvchi botga"
+            '🎉 **Sizning referal havolangiz orqali yangi foydalanuvchi botga'
             " qo'shildi!**\nU hayvon sotib olganda sizga 10% bonus beriladi 💸",
             parse_mode='Markdown',
         )
@@ -211,7 +228,7 @@ def cmd_start(message):
   )
 
 
-# ADMIN BALANSNI O'ZGARTIRISH BUYRUG'I
+# ADMIN BALANSni O'ZGARTIRISH BUYRUG'I
 @bot.message_handler(commands=['balance'])
 def admin_change_balance(message):
   if message.from_user.id != ADMIN_ID:
@@ -329,7 +346,7 @@ def show_farm(message):
   text = (
       f'🌾 **Sizning fermangiz:**\n\n📋 **Mavjud hayvonlar:**\n'
       + '\n'.join(farm_details)
-      + f'\n\n💰 **Yig\'ilgan va olmagan daromadingiz:** {total_uncollected:,}'
+      + f"\n\n💰 **Yig'ilgan va olmagan daromadingiz:** {total_uncollected:,}"
       f" so'm\n\nDaromadni balansingizga o'tkazish uchun quyidagi tugmani"
       ' bosing 👇'
   )
@@ -423,7 +440,7 @@ def show_ref(message):
 
   caption = (
       f"✅ **Do'stingizni taklif qilish orqali ham ma'lum bir miqdorda"
-      f" daromat oling!**💰\n\n📍 [{first_name}](tg://user?id={message.from_user.id})"
+      f' daromat oling!**💰\n\n📍 [{first_name}](tg://user?id={message.from_user.id})'
       " do'stingizdan havola-taklifnoma.\n\nDo'stingizni botimizga taklif"
       " qiling agar do'stingiz bo'limidan hayvon sotib olsa sizning"
       ' hisobingizga 10% miqdorda bonus taqdim etiladi 💸\n\n⚡️ **Boshlash uchun'
@@ -463,7 +480,7 @@ def show_ref(message):
 def deposit_start(message):
   text = (
       f"💸 **Hisobingizni to'ldirmoqchi bo'lsangiz, quyidagi kartaga to'lov"
-      f" qiling.**\n\n💳 **Karta:** `{CARD_NUMBER}`\n\n👤 **Quyidagi kartaga"
+      f' qiling.**\n\n💳 **Karta:** `{CARD_NUMBER}`\n\n👤 **Quyidagi kartaga'
       " to'lov qiling va to'lov chekini yuboring.**\n\n▫️ 24000 so'm dan kamroq"
       ' kiritilgan pullar tushurib berilmaydi.'
   )
@@ -669,4 +686,11 @@ def buy_animal(call):
 if __name__ == '__main__':
   init_db()
   print('Mening Fermam Bot muvaffaqiyatli ishga tushdi!')
+
+  # Veb-serverni alohida oqimda (thread) ishga tushiramiz
+  t = threading.Thread(target=run_web)
+  t.daemon = True
+  t.start()
+
+  # Botni ishga tushiramiz
   bot.infinity_polling()
