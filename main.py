@@ -455,23 +455,13 @@ def show_ref(message):
       )
   )
 
-  try:
-    with open('logo.jpg', 'rb') as photo:
-      bot.send_photo(
-          message.chat.id,
-          photo,
-          caption=caption,
-          parse_mode='Markdown',
-          reply_markup=markup,
-      )
-  except:
-    bot.send_message(
-        message.chat.id,
-        caption,
-        parse_mode='Markdown',
-        reply_markup=markup,
-        disable_web_page_preview=True,
-    )
+  bot.send_message(
+      message.chat.id,
+      caption,
+      parse_mode='Markdown',
+      reply_markup=markup,
+      disable_web_page_preview=True,
+  )
 
 
 @bot.message_handler(func=lambda msg: msg.text == '💸 Pul kiritish')
@@ -671,9 +661,8 @@ def buy_animal(call):
   conn.commit()
   conn.close()
 
-  bot.answer_callback_query(
-      call.id, f"✅ {item['name']} sotib olindi!", show_alert=True
-  )
+  buffer_ans = f"✅ {item['name']} sotib olindi!"
+  bot.answer_callback_query(call.id, buffer_ans, show_alert=True)
   bot.send_message(
       call.message.chat.id,
       f"🎉 **Tabriklaymiz! Siz {item['name']} sotib oldingiz!**",
