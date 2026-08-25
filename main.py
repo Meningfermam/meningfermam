@@ -1,8 +1,5 @@
-import os
 import sqlite3
-import threading
 import time
-from flask import Flask
 import telebot
 from telebot import types
 
@@ -10,19 +7,7 @@ API_TOKEN = '8802630482:AAG-_S2mNc2f5E8VbNz3XepoPLSzNEzVBSQ'
 BOT_USERNAME = 'Meningfeermam_bot'
 bot = telebot.TeleBot(API_TOKEN)
 
-app = Flask(__name__)
-
-
-@app.route('/')
-def home():
-  return 'Bot is running!'
-
-
-def run_web():
-  port = int(os.environ.get('PORT', 5000))
-  app.run(host='0.0.0.0', port=port)
-
-
+# SKRINSHOTLARDAGI ANIQ HAYVONLAR VA DAROMADLAR
 ANIMALS = {
     'tovuq': {
         'name': '🐔 Tovuq',
@@ -81,8 +66,9 @@ ANIMALS = {
 }
 
 ADMIN_ID = 925576047
-CARD_NUMBER = '5614681858174125'
+CARD_NUMBER = '9860080311226940'
 user_states = {}
+
 DB_NAME = 'farm_data.db'
 
 
@@ -140,7 +126,7 @@ def get_user(user_id, referrer_id=None):
         bot.send_message(
             ref_id,
             "🎉 **Sizning referal havolangiz orqali yangi foydalanuvchi botga"
-            " qo'shildi!**",
+            " qo'shildi!**\nU hayvon sotib olganda sizga 10% bonus beriladi 💸",
             parse_mode='Markdown',
         )
       except:
@@ -162,7 +148,7 @@ def get_user_animals_summary(user_id):
   conn.close()
 
   if not rows:
-    return "Mavjud emas"
+    return 'Mavjud emas'
 
   counts = {}
   for r in rows:
@@ -172,40 +158,42 @@ def get_user_animals_summary(user_id):
   res = []
   for key, count in counts.items():
     res.append(f"{ANIMALS[key]['name']} ({count} ta)")
-  return ", ".join(res)
+  return ', '.join(res)
 
 
+# MENYULAR
 def get_main_menu():
   markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-  markup.row("🐮 Hayvon sotib olish")
-  markup.row("👤 Profil", "🔗 Referal")
-  markup.row("💸 Pul kiritish", "💰 Pul yechish")
-  markup.row("🌾 Mening hayvonlarim (Fermam)")
+  markup.row('🐮 Hayvon sotib olish')
+  markup.row('👤 Profil', '🔗 Referal')
+  markup.row('💸 Pul kiritish', '💰 Pul yechish')
+  markup.row('🌾 Mening hayvonlarim (Fermam)')
   return markup
 
 
 def get_shop_inline():
   markup = types.InlineKeyboardMarkup()
   markup.row(
-      types.InlineKeyboardButton("🐔 Tovuq", callback_data="view_tovuq"),
-      types.InlineKeyboardButton("🐇 Quyon", callback_data="view_quyon"),
+      types.InlineKeyboardButton('🐔 Tovuq', callback_data='view_tovuq'),
+      types.InlineKeyboardButton('🐇 Quyon', callback_data='view_quyon'),
   )
   markup.row(
-      types.InlineKeyboardButton("🪿 G'oz", callback_data="view_goz"),
-      types.InlineKeyboardButton("🐐 Echki", callback_data="view_echki"),
+      types.InlineKeyboardButton("🪿 G'oz", callback_data='view_goz'),
+      types.InlineKeyboardButton('🐐 Echki', callback_data='view_echki'),
   )
   markup.row(
-      types.InlineKeyboardButton("🐑 Qo'y", callback_data="view_qoy"),
-      types.InlineKeyboardButton("🐄 Sigir", callback_data="view_sigir"),
+      types.InlineKeyboardButton("🐑 Qo'y", callback_data='view_qoy'),
+      types.InlineKeyboardButton('🐄 Sigir', callback_data='view_sigir'),
   )
   markup.row(
-      types.InlineKeyboardButton("🐎 Ot", callback_data="view_ot"),
-      types.InlineKeyboardButton("🐪 Tuya", callback_data="view_tuya"),
+      types.InlineKeyboardButton('🐎 Ot', callback_data='view_ot'),
+      types.InlineKeyboardButton('🐪 Tuya', callback_data='view_tuya'),
   )
-  markup.row(types.InlineKeyboardButton("🐂 Buqa", callback_data="view_buqa"))
+  markup.row(types.InlineKeyboardButton('🐂 Buqa', callback_data='view_buqa'))
   return markup
 
 
+# ASOSIY HANDLERLAR
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
   args = message.text.split()
@@ -216,104 +204,18 @@ def cmd_start(message):
   get_user(message.from_user.id, referrer_id)
   bot.send_message(
       message.chat.id,
-      "🌾 **Mening Fermam botiga xush kelibsiz!**\n\nQuyidagi menyulardan"
-      " foydalanishingiz mumkin:",
+      '🌾 **Mening Fermam botiga xush kelibsiz!**\n\nQuyidagi menyulardan'
+      ' foydalanishingiz mumkin:',
       reply_markup=get_main_menu(),
       parse_mode='Markdown',
   )
 
 
-@bot.message_handler(func=lambda msg: 'Referal' in msg.text)
-def show_ref(message):
-  user_id = message.from_user.id
-  u = get_user(user_id)
-  ref_link = f'https://t.me/{BOT_USERNAME}?start=r{user_id}'
-
-  caption = (
-      f'🔗 **Sizning referal havolangiz:**\n\n`{ref_link}`\n\n'
-      f"✅ **Do'stingizni taklif qilish orqali daromad oling!** 💰\n\n"
-      f"Do'stingizni botimizga taklif qiling, agar u hayvon sotib olsa, "
-      f"sizning hisobingizga **10%** miqdorda bonus taqdim etiladi 💸\n\n"
-      f"👥 **Siz taklif qilgan do'stlar soni:** {u[1]} ta"
-  )
-
-  markup = types.InlineKeyboardMarkup()
-  markup.row(
-      types.InlineKeyboardButton(
-          '↗️ Do\'stlarga ulashish',
-          url=f'https://t.me/share/url?url={ref_link}&text=Mening%20Fermam%20botiga%20qo%27shiling%20va%20daromad%20oling!',
-      )
-  )
-
-  bot.send_message(
-      message.chat.id,
-      caption,
-      parse_mode='Markdown',
-      reply_markup=markup,
-      disable_web_page_preview=True,
-  )
-
-
-@bot.message_handler(func=lambda msg: 'Profil' in msg.text)
-def show_profile(message):
-  u = get_user(message.from_user.id)
-  animals_text = get_user_animals_summary(message.from_user.id)
-  text = (
-      f"👤 **Sizning shaxsiy kabinetingiz:**\n\n🆔 **ID raqamingiz:**"
-      f" `{message.from_user.id}`\n💰 **Asosiy balansingiz:** {u[0]:,} so'm\n👥"
-      f" **Taklif qilgan do'stlaringiz:** {u[1]} ta\n🌾 **Fermangizdagi"
-      f" hayvonlar:** {animals_text}"
-  )
-  bot.send_message(message.chat.id, text, parse_mode='Markdown')
-
-
-@bot.message_handler(func=lambda msg: 'Hayvon sotib olish' in msg.text)
-def show_shop(message):
-  bot.send_message(
-      message.chat.id,
-      "🛒 **Xarid qilish uchun hayvonni tanlang:**",
-      reply_markup=get_shop_inline(),
-      parse_mode='Markdown',
-  )
-
-
-@bot.message_handler(func=lambda msg: 'Pul kiritish' in msg.text)
-def deposit_start(message):
-  text = (
-      f"💸 **Hisobingizni to'ldirmoqchi bo'lsangiz, quyidagi kartaga to'lov"
-      f" qiling.**\n\n💳 **Karta:** `{CARD_NUMBER}`\n\n👤 To'lov qilib, chekni"
-      " yuboring."
-  )
-  markup = types.InlineKeyboardMarkup()
-  markup.row(
-      types.InlineKeyboardButton(
-          "✅ To'lovni amalga oshirdim", callback_data='pay_done'
-      )
-  )
-  bot.send_message(
-      message.chat.id, text, parse_mode='Markdown', reply_markup=markup
-  )
-
-
-@bot.message_handler(func=lambda msg: 'Pul yechish' in msg.text)
-def withdraw_info(message):
-  u = get_user(message.from_user.id)
-  text = f"💰 **Sizning balansingizda {u[0]:,} so'm bor.**"
-  markup = types.InlineKeyboardMarkup()
-  markup.row(
-      types.InlineKeyboardButton(
-          '💰 Yechib olish', callback_data='withdraw_action'
-      )
-  )
-  bot.send_message(
-      message.chat.id, text, parse_mode='Markdown', reply_markup=markup
-  )
-
-
-@bot.message_handler(func=lambda msg: 'Mening hayvonlarim' in msg.text)
+@bot.message_handler(func=lambda msg: msg.text == '🌾 Mening hayvonlarim (Fermam)')
 def show_farm(message):
   user_id = message.from_user.id
   now = int(time.time())
+
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
   cursor.execute(
@@ -327,29 +229,38 @@ def show_farm(message):
     conn.close()
     bot.send_message(
         message.chat.id,
-        "🌾 **Sizda hali hech qanday hayvon yo'q.**",
+        "🌾 **Sizda hali hech qanday hayvon yo'q.**\n\nHayvon sotib olish uchun"
+        " '🐮 Hayvon sotib olish' bo'limiga o'ting.",
         parse_mode='Markdown',
     )
     return
 
   total_uncollected = 0
   farm_details = []
+
   for a_id, key, buy_time, last_harvest in animals:
     max_duration = 30 * 86400
     active_time = min(now, buy_time + max_duration)
+
     if active_time > last_harvest:
-      earned = int(
-          (active_time - last_harvest) * (ANIMALS[key]['daily'] / 86400)
-      )
+      seconds_passed = active_time - last_harvest
+      daily_income = ANIMALS[key]['daily']
+      income_per_second = daily_income / 86400
+      earned = int(seconds_passed * income_per_second)
       total_uncollected += earned
+
     farm_details.append(f"• {ANIMALS[key]['name']}")
 
   conn.close()
+
   text = (
-      f"🌾 **Sizning fermangiz:**\n\n"
-      + "\n".join(farm_details)
-      + f"\n\n💰 **Yig'ilmagan daromad:** {total_uncollected:,} so'm"
+      f'🌾 **Sizning fermangiz:**\n\n📋 **Mavjud hayvonlar:**\n'
+      + '\n'.join(farm_details)
+      + f'\n\n💰 **Yig\'ilgan va olmagan daromadingiz:** {total_uncollected:,}'
+      f" so'm\n\nDaromadni balansingizga o'tkazish uchun quyidagi tugmani"
+      ' bosing 👇'
   )
+
   markup = types.InlineKeyboardMarkup()
   markup.row(
       types.InlineKeyboardButton(
@@ -361,106 +272,11 @@ def show_farm(message):
   )
 
 
-# ================= ADMIN: PUL QO'SHISH VA AYIRISH =================
-@bot.message_handler(commands=['add'])
-def admin_add_balance(message):
-  if message.from_user.id != ADMIN_ID:
-    return
-  args = message.text.split()
-  if len(args) < 3:
-    bot.send_message(
-        message.chat.id,
-        "❌ Xato! Ishlatish: `/add [user_id] [summa]`",
-        parse_mode='Markdown',
-    )
-    return
-
-  target_user = int(args[1])
-  amount = int(args[2])
-
-  # Foydalanuvchi bazada bormi yo'qligini tekshiramiz, bo'lmasa ochamiz
-  get_user(target_user)
-
-  conn = sqlite3.connect(DB_NAME)
-  cursor = conn.cursor()
-  cursor.execute(
-      'UPDATE users SET balance = balance + ? WHERE user_id = ?',
-      (amount, target_user),
-  )
-  conn.commit()
-  conn.close()
-
-  # Adminga xabar
-  bot.send_message(
-      message.chat.id,
-      f"✅ `{target_user}` ID egasining balansiga **{amount:,} so'm** qo'shildi!",
-      parse_mode='Markdown',
-  )
-
-  # Foydalanuvchiga xabar yuborishga harakat qilamiz
-  try:
-    bot.send_message(
-        target_user,
-        f"🎉 **Hisobingizga {amount:,} so'm qo'shildi!** 💰",
-        parse_mode='Markdown',
-    )
-  except Exception as e:
-    bot.send_message(
-        message.chat.id,
-        f"⚠️ Balans qo'shildi, lekin foydalanuvchiga xabar borishida xatolik"
-        f" bo'ldi (botni bloklagan bo'lishi mumkin): `{e}`",
-        parse_mode='Markdown',
-    )
-
-
-@bot.message_handler(commands=['sub'])
-def admin_sub_balance(message):
-  if message.from_user.id != ADMIN_ID:
-    return
-  args = message.text.split()
-  if len(args) < 3:
-    bot.send_message(
-        message.chat.id,
-        "❌ Xato! Ishlatish: `/sub [user_id] [summa]`",
-        parse_mode='Markdown',
-    )
-    return
-
-  target_user = int(args[1])
-  amount = int(args[2])
-
-  get_user(target_user)
-
-  conn = sqlite3.connect(DB_NAME)
-  cursor = conn.cursor()
-  cursor.execute(
-      'UPDATE users SET balance = balance - ? WHERE user_id = ?',
-      (amount, target_user),
-  )
-  conn.commit()
-  conn.close()
-
-  bot.send_message(
-      message.chat.id,
-      f"✅ `{target_user}` ID egasining balansidan **{amount:,} so'm**"
-      " ayirildi!",
-      parse_mode='Markdown',
-  )
-
-  try:
-    bot.send_message(
-        target_user,
-        f"⚠️ **Hisobingizdan {amount:,} so'm ayirildi!**",
-        parse_mode='Markdown',
-    )
-  except:
-    pass
-
-
 @bot.callback_query_handler(func=lambda call: call.data == 'collect_income')
 def collect_income(call):
   user_id = call.from_user.id
   now = int(time.time())
+
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
   cursor.execute(
@@ -469,14 +285,18 @@ def collect_income(call):
       (user_id,),
   )
   animals = cursor.fetchall()
+
   total_uncollected = 0
+
   for a_id, key, buy_time, last_harvest in animals:
     max_duration = 30 * 86400
     active_time = min(now, buy_time + max_duration)
+
     if active_time > last_harvest:
-      earned = int(
-          (active_time - last_harvest) * (ANIMALS[key]['daily'] / 86400)
-      )
+      seconds_passed = active_time - last_harvest
+      daily_income = ANIMALS[key]['daily']
+      income_per_second = daily_income / 86400
+      earned = int(seconds_passed * income_per_second)
       total_uncollected += earned
       cursor.execute(
           'UPDATE user_animals SET last_harvest = ? WHERE id = ?',
@@ -496,8 +316,8 @@ def collect_income(call):
         show_alert=True,
     )
     bot.edit_message_text(
-        f"🎉 **Barcha daromadlar yig'ib olindi!**\nBalansga o'tkazildi:"
-        f" **{total_uncollected:,} so'm**",
+        f'🎉 **Barcha daromadlar yig\'ib olindi!**\n\nBalansga o\'tkazildi:'
+        f' **{total_uncollected:,} so\'m**',
         call.message.chat.id,
         call.message.message_id,
         parse_mode='Markdown',
@@ -505,19 +325,300 @@ def collect_income(call):
   else:
     conn.close()
     bot.answer_callback_query(
-        call.id, "⚠️ Hozircha daromad yo'q!", show_alert=True
+        call.id, "⚠️ Hozircha yig'ish uchun daromad yo'q!", show_alert=True
     )
+
+
+@bot.message_handler(func=lambda msg: msg.text == '👤 Profil')
+def show_profile(message):
+  u = get_user(message.from_user.id)
+  animals_text = get_user_animals_summary(message.from_user.id)
+
+  text = (
+      f'👤 **Sizning shaxsiy kabinetingiz:**\n\n🆔 **ID raqamingiz:**'
+      f' `{message.from_user.id}`\n💰 **Asosiy balansingiz:** {u[0]:,} so\'m\n👥'
+      f" **Taklif qilgan do'stlaringiz:** {u[1]} ta\n🌾 **Fermangizdagi"
+      f' hayvonlar:** {animals_text}'
+  )
+  bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+
+@bot.message_handler(func=lambda msg: msg.text == '🔗 Referal')
+def show_ref(message):
+  first_name = message.from_user.first_name
+  ref_link = f'https://t.me/{BOT_USERNAME}?start=r{message.from_user.id}'
+
+  caption = (
+      f"✅ **Do'stingizni taklif qilish orqali ham ma'lum bir miqdorda"
+      f" daromat oling!**💰\n\n📍 [{first_name}](tg://user?id={message.from_user.id})"
+      " do'stingizdan havola-taklifnoma.\n\nDo'stingizni botimizga taklif"
+      " qiling agar do'stingiz bo'limidan hayvon sotib olsa sizning"
+      ' hisobingizga 10% miqdorda bonus taqdim etiladi 💸\n\n⚡️ **Boshlash uchun'
+      f' bosing:**\n{ref_link}'
+  )
+
+  markup = types.InlineKeyboardMarkup()
+  markup.row(
+      types.InlineKeyboardButton(
+          '↗️ Ulashish',
+          switch_inline_query=(
+              f"Do'stingizni botimizga taklif qiling: {ref_link}"
+          ),
+      )
+  )
+
+  try:
+    with open('logo.jpg', 'rb') as photo:
+      bot.send_photo(
+          message.chat.id,
+          photo,
+          caption=caption,
+          parse_mode='Markdown',
+          reply_markup=markup,
+      )
+  except:
+    bot.send_message(
+        message.chat.id,
+        caption,
+        parse_mode='Markdown',
+        reply_markup=markup,
+        disable_web_page_preview=True,
+    )
+
+
+@bot.message_handler(func=lambda msg: msg.text == '💸 Pul kiritish')
+def deposit_start(message):
+  text = (
+      f"💸 **Hisobingizni to'ldirmoqchi bo'lsangiz, quyidagi kartaga to'lov"
+      f" qiling.**\n\n💳 **Karta:** `{CARD_NUMBER}`\n\n👤 **Quyidagi kartaga"
+      " to'lov qiling va to'lov chekini yuboring.**\n\n▫️ 24000 so'm dan kamroq"
+      ' kiritilgan pullar tushurib berilmaydi.'
+  )
+  markup = types.InlineKeyboardMarkup()
+  markup.row(
+      types.InlineKeyboardButton(
+          "✅ To'lovni amalga oshirdim", callback_data='pay_done'
+      )
+  )
+  bot.send_message(
+      message.chat.id, text, parse_mode='Markdown', reply_markup=markup
+  )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == 'pay_done')
+def pay_done_callback(call):
+  user_states[call.from_user.id] = 'waiting_for_check'
+  text = (
+      f"👨‍💼 **To'lov kvitansiyasi (chekini) yuboring.**\n\n**Eslatma:**\n▪️"
+      ' Chekda sana, vaqt, ism familiya miqdor to\'liq ko\'rinishi kerak!\n▪️'
+      ' Soxta chek yasash yoki umuman to\'lov qilmaslik, bloklanishga sabab'
+      ' bo\'ladi.'
+  )
+  markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+  markup.row('⬅️ Ortga qaytish')
+  bot.send_message(
+      call.message.chat.id, text, parse_mode='Markdown', reply_markup=markup
+  )
+
+
+@bot.message_handler(func=lambda msg: msg.text == '⬅️ Ortga qaytish')
+def back_to_main_menu(message):
+  user_states.pop(message.from_user.id, None)
+  bot.send_message(
+      message.chat.id,
+      '▪️ **Bosh sahifaga hush kelibsiz.**',
+      reply_markup=get_main_menu(),
+      parse_mode='Markdown',
+  )
+
+
+@bot.message_handler(
+    content_types=['photo', 'document'],
+    func=lambda msg: user_states.get(msg.from_user.id) == 'waiting_for_check',
+)
+def handle_check_upload(message):
+  user_states.pop(message.from_user.id, None)
+  bot.send_message(
+      message.chat.id,
+      "✅ **Chekingiz qabul qilindi. Operatorlar ko'rib chiqqach balansingiz"
+      ' to\'ldiriladi!**',
+      reply_markup=get_main_menu(),
+      parse_mode='Markdown',
+  )
+
+  bot.send_message(
+      ADMIN_ID,
+      f"📥 **Yangi to'lov cheki keldi!**\nFoydalanuvchi:"
+      f' @{message.from_user.username} (ID: `{message.from_user.id}`)',
+      parse_mode='Markdown',
+  )
+  if message.photo:
+    bot.send_photo(ADMIN_ID, message.photo[-1].file_id)
+  elif message.document:
+    bot.send_document(ADMIN_ID, message.document.file_id)
+
+
+# --- PUL YECHISH UCHUN YANGI HANDLERLAR ---
+
+@bot.message_handler(func=lambda msg: user_states.get(msg.from_user.id) == 'waiting_withdraw_card')
+def process_withdraw_card(message):
+  card = message.text.replace(" ", "")
+  if not card.isdigit() or len(card) < 16:
+    bot.send_message(message.chat.id, "❌ **Noto'g'ri karta raqami!** Iltimos, 16 xonali karta raqamingizni qaytadan kiriting:")
+    return
+
+  user_states[message.from_user.id] = {'state': 'waiting_withdraw_amount', 'card': card}
+  bot.send_message(message.chat.id, "💵 **Yechib olmoqchi bo'lgan summangizni kiriting (so'mda):**\n(Minimal: 20,000 so'm)", parse_mode='Markdown')
+
+
+@bot.message_handler(func=lambda msg: isinstance(user_states.get(msg.from_user.id), dict) and user_states[msg.from_user.id].get('state') == 'waiting_withdraw_amount')
+def process_withdraw_amount(message):
+  user_id = message.from_user.id
+  u = get_user(user_id)
+  state_data = user_states.pop(user_id, {})
+  card = state_data.get('card')
+
+  if not message.text.isdigit():
+    bot.send_message(message.chat.id, "❌ Summani faqat raqamlarda kiriting!", reply_markup=get_main_menu())
+    return
+
+  amount = int(message.text)
+
+  if amount < 20000:
+    bot.send_message(message.chat.id, "❌ Minimal yechish summasi 20,000 so'm!", reply_markup=get_main_menu())
+    return
+
+  if amount > u[0]:
+    bot.send_message(message.chat.id, f"❌ Balansingizda yetarli mablag' yo'q! Sizning balansingiz: {u[0]:,} so'm", reply_markup=get_main_menu())
+    return
+
+  conn = sqlite3.connect(DB_NAME)
+  cursor = conn.cursor()
+  cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (amount, user_id))
+  conn.commit()
+  conn.close()
+
+  bot.send_message(message.chat.id, f"✅ **So'rov qabul qilindi!**\n\n💰 Summa: {amount:,} so'm\n💳 Karta: `{card}`\n\nOperatorlar so'rovni ko'rib chiqqach pul kartangizga o'tkaziladi.", parse_mode='Markdown', reply_markup=get_main_menu())
+
+  admin_markup = types.InlineKeyboardMarkup()
+  admin_markup.row(
+      types.InlineKeyboardButton("✅ To'lab berildi", callback_data=f"wpay_{user_id}_{amount}"),
+      types.InlineKeyboardButton("❌ Rad etish", callback_data=f"wref_{user_id}_{amount}")
+  )
+
+  user_name = message.from_user.username
+  user_mention = f"@{user_name}" if user_name else f"ID: {user_id}"
+
+  bot.send_message(
+      ADMIN_ID,
+      f"📥 **Yangi pul yechish so'rovi!**\n\n👤 Foydalanuvchi: {user_mention} (`{user_id}`)\n💳 Karta: `{card}`\n💰 Summa: **{amount:,} so'm**",
+      parse_mode='Markdown',
+      reply_markup=admin_markup
+  )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith(('wpay_', 'wref_')))
+def handle_admin_withdraw_decision(call):
+  if call.from_user.id != ADMIN_ID:
+    return
+
+  action, target_user_id, amount = call.data.split('_')
+  target_user_id = int(target_user_id)
+  amount = int(amount)
+
+  if action == 'wpay':
+    bot.edit_message_text(
+        call.message.text + "\n\n✅ **TO'LAB BERILDI**",
+        call.message.chat.id,
+        call.message.message_id
+    )
+    try:
+      bot.send_message(target_user_id, f"🎉 **Pulingiz kartangizga o'tkazib berildi!**\n💰 Summa: {amount:,} so'm", parse_mode='Markdown')
+    except:
+      pass
+
+  elif action == 'wref':
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, target_user_id))
+    conn.commit()
+    conn.close()
+
+    bot.edit_message_text(
+        call.message.text + "\n\n❌ **RAD ETILDI (Pul balansga qaytarildi)**",
+        call.message.chat.id,
+        call.message.message_id
+    )
+    try:
+      bot.send_message(target_user_id, f"❌ **Sizning pul yechish so'rovingiz rad etildi.**\n💰 {amount:,} so'm balansingizga qaytarildi.", parse_mode='Markdown')
+    except:
+      pass
+
+
+# --- PUL YECHISH MENYUSI HANDLERLARI ---
+
+@bot.message_handler(func=lambda msg: msg.text == '💰 Pul yechish')
+def withdraw_info(message):
+  u = get_user(message.from_user.id)
+  text = f'💰 **Sizning balansingizda {u[0]:,} so\'m bor.**'
+  markup = types.InlineKeyboardMarkup()
+  markup.row(
+      types.InlineKeyboardButton(
+          '💰 Yechib olish', callback_data='withdraw_action'
+      )
+  )
+  bot.send_message(
+      message.chat.id, text, parse_mode='Markdown', reply_markup=markup
+  )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == 'withdraw_action')
+def withdraw_action(call):
+  user_id = call.from_user.id
+  u = get_user(user_id)
+
+  if u[0] < 20000:
+    bot.answer_callback_query(call.id, "⚠️ Minimal pul yechish miqdori: 20,000 so'm!", show_alert=True)
+    return
+
+  user_states[user_id] = 'waiting_withdraw_card'
+  bot.answer_callback_query(call.id)
+
+  markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+  markup.row('⬅️ Ortga qaytish')
+
+  bot.send_message(
+      call.message.chat.id,
+      "💳 **Pul yechib olish uchun Plastik karta raqamingizni kiriting:**\n(Masalan: 8600123456789012)",
+      parse_mode='Markdown',
+      reply_markup=markup
+  )
+
+
+@bot.message_handler(func=lambda msg: msg.text == '🐮 Hayvon sotib olish')
+def show_shop(message):
+  bot.send_message(
+      message.chat.id,
+      '🛒 **Xarid qilish uchun hayvonni tanlang:**',
+      reply_markup=get_shop_inline(),
+      parse_mode='Markdown',
+  )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('view_'))
 def view_animal(call):
   key = call.data.split('_')[1]
   item = ANIMALS[key]
+
   text = (
-      f"Hayvon nomi: {item['name']}\n\n▫️ Narxi: {item['price']:,}"
+      f"Hayvon nomi: {item['name']}\n\n▫️ Hayvon narxi {item['price']:,}"
       f" so'm\n▫️ Kunlik daromad: {item['daily']:,} so'm\n▫️ Umumiy daromad:"
-      f" {item['total']:,} so'm\n\n✅ 30 kun davomida ishlaydi."
+      f" {item['total']:,} so'm\n\n✅ **Hayvon 30 kun davomida sizga foyda"
+      " keltirib beradi. 30 kundan so'ng daromad berish vaqti"
+      ' tugaydi.**\n\n🛒 Ushbu Hayvonni sotib olmoqchi bo\'lsangiz sotib olish'
+      ' tugmasini bosing ⚡'
   )
+
   markup = types.InlineKeyboardMarkup()
   markup.row(
       types.InlineKeyboardButton(
@@ -527,6 +628,7 @@ def view_animal(call):
   markup.row(
       types.InlineKeyboardButton('⬅️ Orqaga', callback_data='back_to_shop')
   )
+
   bot.edit_message_text(
       text,
       call.message.chat.id,
@@ -553,6 +655,7 @@ def buy_animal(call):
   user_id = call.from_user.id
   u = get_user(user_id)
   item = ANIMALS[key]
+
   if u[0] < item['price']:
     bot.answer_callback_query(
         call.id, '❌ Balans yetarli emas!', show_alert=True
@@ -562,6 +665,7 @@ def buy_animal(call):
   now = int(time.time())
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
+
   cursor.execute(
       'UPDATE users SET balance = balance - ? WHERE user_id = ?',
       (item['price'], user_id),
@@ -571,6 +675,7 @@ def buy_animal(call):
       ' VALUES (?, ?, ?, ?)',
       (user_id, key, now, now),
   )
+
   cursor.execute('SELECT referrer_id FROM users WHERE user_id = ?', (user_id,))
   ref_row = cursor.fetchone()
   if ref_row and ref_row[0]:
@@ -583,14 +688,16 @@ def buy_animal(call):
     try:
       bot.send_message(
           ref_id,
-          f"🎉 Do'stingiz hayvon sotib oldi! Sizga **{bonus:,} so'm** bonus"
-          " berildi!",
+          "🎉 **Taklif qilgan do'stingiz hayvon sotib oldi!**\nSizga"
+          f" **{bonus:,} so'm** (10%) bonus berildi!",
           parse_mode='Markdown',
       )
     except:
       pass
+
   conn.commit()
   conn.close()
+
   bot.answer_callback_query(
       call.id, f"✅ {item['name']} sotib olindi!", show_alert=True
   )
@@ -601,49 +708,7 @@ def buy_animal(call):
   )
 
 
-@bot.callback_query_handler(func=lambda call: call.data == 'pay_done')
-def pay_done_callback(call):
-  user_states[call.from_user.id] = 'waiting_for_check'
-  bot.send_message(
-      call.message.chat.id,
-      "👨‍💼 **Iltimos, to'lov chekini (rasm ko'rinishida) yuboring.**",
-      parse_mode='Markdown',
-  )
-
-
-@bot.message_handler(
-    content_types=['photo', 'document'],
-    func=lambda msg: user_states.get(msg.from_user.id) == 'waiting_for_check',
-)
-def handle_check_upload(message):
-  user_states.pop(message.from_user.id, None)
-  bot.send_message(
-      message.chat.id,
-      "✅ **Chekingiz qabul qilindi! Admin tasdiqlagach balansga qo'shiladi.**",
-      reply_markup=get_main_menu(),
-      parse_mode='Markdown',
-  )
-  bot.send_message(
-      ADMIN_ID,
-      f"📥 **Yangi to'lov cheki!**\nFoydalanuvchi ID: `{message.from_user.id}`\n"
-      f"Balansga qo'shish uchun:\n`/add {message.from_user.id} [summa]`",
-      parse_mode='Markdown',
-  )
-  if message.photo:
-    bot.send_photo(ADMIN_ID, message.photo[-1].file_id)
-
-
-@bot.callback_query_handler(func=lambda call: call.data == 'withdraw_action')
-def withdraw_action(call):
-  bot.answer_callback_query(
-      call.id, "⚠️ Minimal pul yechish: 20,000 so'm!", show_alert=True
-  )
-
-
 if __name__ == '__main__':
   init_db()
-  print('Bot ishga tushdi!')
-  t = threading.Thread(target=run_web)
-  t.daemon = True
-  t.start()
+  print('Mening Fermam Bot muvaffaqiyatli ishga tushdi!')
   bot.infinity_polling()
