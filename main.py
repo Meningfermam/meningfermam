@@ -361,8 +361,7 @@ def show_farm(message):
   )
 
 
-# ================= ADMIN UCHUN BALANDNI QO'SHISH/AYIRISH BUYRUQLARI =================
-# Misol uchun admin botga: /add 925576047 50000 deb yozib foydalanuvchiga pul qo'shishi mumkin
+# ================= ADMIN: PUL QO'SHISH VA AYIRISH =================
 @bot.message_handler(commands=['add'])
 def admin_add_balance(message):
   if message.from_user.id != ADMIN_ID:
@@ -398,6 +397,48 @@ def admin_add_balance(message):
     bot.send_message(
         target_user,
         f"🎉 **Hisobingizga {amount:,} so'm qo'shildi!**",
+        parse_mode='Markdown',
+    )
+  except:
+    pass
+
+
+@bot.message_handler(commands=['sub'])
+def admin_sub_balance(message):
+  if message.from_user.id != ADMIN_ID:
+    return
+  args = message.text.split()
+  if len(args) < 3:
+    bot.send_message(
+        message.chat.id,
+        "❌ Xato! Ishlatish: `/sub [user_id] [summa]`",
+        parse_mode='Markdown',
+    )
+    return
+
+  target_user = int(args[1])
+  amount = int(args[2])
+
+  get_user(target_user)
+  conn = sqlite3.connect(DB_NAME)
+  cursor = conn.cursor()
+  cursor.execute(
+      'UPDATE users SET balance = balance - ? WHERE user_id = ?',
+      (amount, target_user),
+  )
+  conn.commit()
+  conn.close()
+
+  bot.send_message(
+      message.chat.id,
+      f"✅ `{target_user}` ID egasining balansidan **{amount:,} so'm**"
+      " ayirildi!",
+      parse_mode='Markdown',
+  )
+  try:
+    bot.send_message(
+        target_user,
+        f"⚠️ **Hisobingizdan {amount:,} so'm ayirildi!**",
         parse_mode='Markdown',
     )
   except:
