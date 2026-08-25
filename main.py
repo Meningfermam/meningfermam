@@ -378,7 +378,9 @@ def admin_add_balance(message):
   target_user = int(args[1])
   amount = int(args[2])
 
+  # Foydalanuvchi bazada bormi yo'qligini tekshiramiz, bo'lmasa ochamiz
   get_user(target_user)
+
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
   cursor.execute(
@@ -388,19 +390,27 @@ def admin_add_balance(message):
   conn.commit()
   conn.close()
 
+  # Adminga xabar
   bot.send_message(
       message.chat.id,
       f"✅ `{target_user}` ID egasining balansiga **{amount:,} so'm** qo'shildi!",
       parse_mode='Markdown',
   )
+
+  # Foydalanuvchiga xabar yuborishga harakat qilamiz
   try:
     bot.send_message(
         target_user,
-        f"🎉 **Hisobingizga {amount:,} so'm qo'shildi!**",
+        f"🎉 **Hisobingizga {amount:,} so'm qo'shildi!** 💰",
         parse_mode='Markdown',
     )
-  except:
-    pass
+  except Exception as e:
+    bot.send_message(
+        message.chat.id,
+        f"⚠️ Balans qo'shildi, lekin foydalanuvchiga xabar borishida xatolik"
+        f" bo'ldi (botni bloklagan bo'lishi mumkin): `{e}`",
+        parse_mode='Markdown',
+    )
 
 
 @bot.message_handler(commands=['sub'])
@@ -420,6 +430,7 @@ def admin_sub_balance(message):
   amount = int(args[2])
 
   get_user(target_user)
+
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
   cursor.execute(
@@ -435,6 +446,7 @@ def admin_sub_balance(message):
       " ayirildi!",
       parse_mode='Markdown',
   )
+
   try:
     bot.send_message(
         target_user,
