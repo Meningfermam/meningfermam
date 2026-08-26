@@ -191,6 +191,52 @@ def get_shop_inline():
     return markup
 
 
+# ADMIN BALANSNI O'ZGARTIRISH BUYRUG'I
+@bot.message_handler(commands=['balance'])
+def admin_change_balance(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    args = message.text.split()
+    if len(args) < 3:
+        bot.send_message(message.chat.id, "⚠️ Xato format! Ishlatilishi:\n`/balance [user_id] [summa]`\n(Masalan: `/balance 123456789 50000`)", parse_mode='Markdown')
+        return
+    
+    try:
+        target_user_id = int(args[1])
+        amount = int(args[2])
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ ID va summa faqat raqamlardan iborat bo'lishi kerak!")
+        return
+
+    # Foydalanuvchi bazada borligini tekshirish/yaratish
+    get_user(target_user_id)
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, target_user_id))
+    conn.commit()
+    
+    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (target_user_id,))
+    new_balance = cursor.fetchone()[0]
+    conn.close()
+
+    bot.send_message(
+        message.chat.id,
+        f"✅ Muvaffaqiyatli o'zgartirildi!\n👤 Foydalanuvchi ID: `{target_user_id}`\n💰 Qo'shilgan/Ayirilgan: {amount:,} so'm\n💳 Yangi balansi: *{new_balance:,} so'm*",
+        parse_mode='Markdown'
+    )
+    
+    # Foydalanuvchining o'ziga ham xabar yuborish
+    try:
+        if amount > 0:
+            bot.send_message(target_user_id, f"🎉 *Admin tomonidan balansingizga {amount:,} so'm qo'shildi!*", parse_mode='Markdown')
+        else:
+            bot.send_message(target_user_id, f"⚠️ *Admin tomonidan balansingizdan {abs(amount):,} so'm ayirildi.*", parse_mode='Markdown')
+    except:
+        pass
+
+
 # ASOSIY HANDLERLAR
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
