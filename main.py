@@ -1,5 +1,6 @@
 import sqlite3
 import time
+import random
 import telebot
 from telebot import types
 
@@ -80,7 +81,8 @@ def init_db():
             user_id INTEGER PRIMARY KEY,
             balance INTEGER DEFAULT 0,
             referrals INTEGER DEFAULT 0,
-            referrer_id INTEGER DEFAULT NULL
+            referrer_id INTEGER DEFAULT NULL,
+            last_bonus INTEGER DEFAULT 0
         )
     ''')
     cursor.execute('''
@@ -112,7 +114,7 @@ def get_user(user_id, referrer_id=None):
                 ref_id = None
 
         cursor.execute(
-            'INSERT INTO users (user_id, balance, referrals, referrer_id) VALUES (?, 0, 0, ?)',
+            'INSERT INTO users (user_id, balance, referrals, referrer_id, last_bonus) VALUES (?, 0, 0, ?, 0)',
             (user_id, ref_id),
         )
 
@@ -165,7 +167,7 @@ def get_main_menu():
     markup.row('🐮 Hayvon sotib olish')
     markup.row('👤 Profil', '🔗 Referal')
     markup.row('💸 Pul kiritish', '💰 Pul yechish')
-    markup.row('🌾 Mening hayvonlarim (Fermam)')
+    markup.row('🌾 Mening hayvonlarim (Fermam)', '🎁 Kunlik bonus')
     return markup
 
 
@@ -209,7 +211,6 @@ def admin_change_balance(message):
         bot.send_message(message.chat.id, "❌ ID va summa faqat raqamlardan iborat bo'lishi kerak!")
         return
 
-    # Foydalanuvchi bazada borligini tekshirish/yaratish
     get_user(target_user_id)
 
     conn = sqlite3.connect(DB_NAME)
@@ -227,7 +228,6 @@ def admin_change_balance(message):
         parse_mode='Markdown'
     )
     
-    # Foydalanuvchining o'ziga ham xabar yuborish
     try:
         if amount > 0:
             bot.send_message(target_user_id, f"🎉 *Admin tomonidan balansingizga {amount:,} so'm qo'shildi!*", parse_mode='Markdown')
@@ -251,6 +251,46 @@ def cmd_start(message):
         '🌾 *Mening Fermam botiga xush kelibsiz!*\n\nQuyidagi menyulardan foydalanishingiz mumkin:',
         reply_markup=get_main_menu(),
         parse_mode='Markdown',
+    )
+
+
+# --- KUNLIK BONUS HANDLERI ---
+@bot.message_handler(func=lambda msg: msg.text == '🎁 Kunlik bonus')
+def daily_bonus_handler(message):
+    user_id = message.from_user.id
+    get_user(user_id)
+    
+    now = int(time.time())
+    cooldown = 24 * 60 * 60  # 24 soat (sekundda)
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('SELECT last_bonus FROM users WHERE user_id = ?', (user_id,))
+    last_bonus = cursor.fetchone()[0]
+
+    if now - last_bonus < cooldown:
+        remaining_time = cooldown - (now - last_bonus)
+        hours = remaining_time // 3600
+        minutes = (remaining_time % 3600) // 60
+        conn.close()
+        bot.send_message(
+            message.chat.id,
+            f"⏳ *Siz allaqachon kunlik bonusni olgansiz!*\n\nKeyingi bonusni olishingiz mumkin bo'lgan vaqt: *{hours} soat {minutes} daqiqa*dan keyin 🕒",
+            parse_mode='Markdown'
+        )
+        return
+
+    # Tasodifiy bonus miqdori (Masalan: 500 so'mdan 5,000 so'mgacha)
+    bonus_amount = random.randint(500, 5000)
+
+    cursor.execute('UPDATE users SET balance = balance + ?, last_bonus = ? WHERE user_id = ?', (bonus_amount, now, user_id))
+    conn.commit()
+    conn.close()
+
+    bot.send_message(
+        message.chat.id,
+        f"🎁 *Tabriklaymiz! Siz kunlik bonusni oldingiz.*\n\n💰 Balansingizga *{bonus_amount:,} so'm* qo'shildi! ✨",
+        parse_mode='Markdown'
     )
 
 
