@@ -1,8 +1,14 @@
-import sqlite3
+
+import os
 import time
 import random
 import telebot
 from telebot import types
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
+# Render'dagi Environment Variable'dan olinadi
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
 API_TOKEN = '8802630482:AAG-_S2mNc2f5E8VbNz3XepoPLSzNEzVBSQ'
 BOT_USERNAME = 'Meningfeermam_bot'
@@ -23,75 +29,80 @@ ANIMALS = {
 ADMIN_ID = 925576047
 CARD_NUMBER = '5614681858174125 vs 4231200220385677'
 user_states = {}
-DB_NAME = 'farm_data.db'
+
+
+def get_db_connection():
+    """PostgreSQL bazasiga ulanish yaratish"""
+    return psycopg2.connect(DATABASE_URL, sslmode='require')
 
 
 def init_db():
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                balance INTEGER DEFAULT 0,
-                referrals INTEGER DEFAULT 0,
-                referrer_id INTEGER DEFAULT NULL,
-                last_bonus INTEGER DEFAULT 0
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS user_animals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                animal_key TEXT,
-                buy_time INTEGER,
-                last_harvest INTEGER
-            )
-        ''')
-        conn.commit()
+    """PostgreSQL jadvallarini yaratish"""
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    balance BIGINT DEFAULT 0,
+                    referrals INT DEFAULT 0,
+                    referrer_id BIGINT DEFAULT NULL,
+                    last_bonus BIGINT DEFAULT 0
+                );
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_animals (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
+                    animal_key VARCHAR(50),
+                    buy_time BIGINT,
+                    last_harvest BIGINT
+                );
+            ''')
+            conn.commit()
 
 
 def get_user(user_id, referrer_id=None):
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT balance, referrals FROM users WHERE user_id = ?', (user_id,))
-        user = cursor.fetchone()
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT balance, referrals FROM users WHERE user_id = %s;', (user_id,))
+            user = cursor.fetchone()
 
-        if not user:
-            ref_id = None
-            if referrer_id and str(referrer_id).isdigit():
-                ref_id = int(referrer_id)
-                if ref_id == user_id:
-                    ref_id = None
+            if not user:
+                ref_id = None
+                if referrer_id and str(referrer_id).isdigit():
+                    ref_id = int(referrer_id)
+                    if ref_id == user_id:
+                        ref_id = None
 
-            cursor.execute(
-                'INSERT INTO users (user_id, balance, referrals, referrer_id, last_bonus) VALUES (?, 0, 0, ?, 0)',
-                (user_id, ref_id)
-            )
-
-            if ref_id:
                 cursor.execute(
-                    'UPDATE users SET referrals = referrals + 1 WHERE user_id = ?',
-                    (ref_id,)
+                    'INSERT INTO users (user_id, balance, referrals, referrer_id, last_bonus) VALUES (%s, 0, 0, %s, 0);',
+                    (user_id, ref_id)
                 )
-                try:
-                    bot.send_message(
-                        ref_id,
-                        "🎉 *Sizning referal havolangiz orqali yangi foydalanuvchi botga qo'shildi!*\nU hayvon sotib olganda sizga 10% bonus beriladi 💸",
-                        parse_mode='Markdown'
-                    )
-                except:
-                    pass
 
-            conn.commit()
-            user = (0, 0)
-        return user
+                if ref_id:
+                    cursor.execute(
+                        'UPDATE users SET referrals = referrals + 1 WHERE user_id = %s;',
+                        (ref_id,)
+                    )
+                    try:
+                        bot.send_message(
+                            ref_id,
+                            "🎉 *Sizning referal havolangiz orqali yangi foydalanuvchi botga qo'shildi!*\nU hayvon sotib olganda sizga 10% bonus beriladi 💸",
+                            parse_mode='Markdown'
+                        )
+                    except Exception:
+                        pass
+
+                conn.commit()
+                user = (0, 0)
+            return user
 
 
 def get_user_animals_summary(user_id):
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT animal_key FROM user_animals WHERE user_id = ?', (user_id,))
-        rows = cursor.fetchall()
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT animal_key FROM user_animals WHERE user_id = %s;', (user_id,))
+            rows = cursor.fetchall()
 
     if not rows:
         return 'Mavjud emas'
@@ -142,12 +153,12 @@ def get_shop_inline():
 def admin_change_balance(message):
     if message.from_user.id != ADMIN_ID:
         return
-    
+
     args = message.text.split()
     if len(args) < 3:
         bot.send_message(message.chat.id, "⚠️ Xato format! Ishlatilishi:\n`/balance [user_id] [summa]`", parse_mode='Markdown')
         return
-    
+
     try:
         target_user_id = int(args[1])
         amount = int(args[2])
@@ -157,25 +168,25 @@ def admin_change_balance(message):
 
     get_user(target_user_id)
 
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, target_user_id))
-        conn.commit()
-        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (target_user_id,))
-        new_balance = cursor.fetchone()[0]
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET balance = balance + %s WHERE user_id = %s;", (amount, target_user_id))
+            conn.commit()
+            cursor.execute("SELECT balance FROM users WHERE user_id = %s;", (target_user_id,))
+            new_balance = cursor.fetchone()[0]
 
     bot.send_message(
         message.chat.id,
         f"✅ Muvaffaqiyatli o'zgartirildi!\n👤 Foydalanuvchi ID: `{target_user_id}`\n💰 Summa: {amount:,} so'm\n💳 Yangi balansi: *{new_balance:,} so'm*",
         parse_mode='Markdown'
     )
-    
+
     try:
         if amount > 0:
             bot.send_message(target_user_id, f"🎉 *Admin tomonidan balansingizga {amount:,} so'm qo'shildi!*", parse_mode='Markdown')
         else:
             bot.send_message(target_user_id, f"⚠️ *Admin tomonidan balansingizdan {abs(amount):,} so'm ayirildi.*", parse_mode='Markdown')
-    except:
+    except Exception:
         pass
 
 
@@ -199,29 +210,29 @@ def cmd_start(message):
 def daily_bonus_handler(message):
     user_id = message.from_user.id
     get_user(user_id)
-    
+
     now = int(time.time())
     cooldown = 24 * 60 * 60
 
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT last_bonus FROM users WHERE user_id = ?', (user_id,))
-        last_bonus = cursor.fetchone()[0]
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT last_bonus FROM users WHERE user_id = %s;', (user_id,))
+            last_bonus = cursor.fetchone()[0]
 
-        if now - last_bonus < cooldown:
-            remaining_time = cooldown - (now - last_bonus)
-            hours = remaining_time // 3600
-            minutes = (remaining_time % 3600) // 60
-            bot.send_message(
-                message.chat.id,
-                f"⏳ *Siz allaqachon kunlik bonusni olgansiz!*\n\nKeyingi vaqt: *{hours} soat {minutes} daqiqa*dan keyin 🕒",
-                parse_mode='Markdown'
-            )
-            return
+            if now - last_bonus < cooldown:
+                remaining_time = cooldown - (now - last_bonus)
+                hours = remaining_time // 3600
+                minutes = (remaining_time % 3600) // 60
+                bot.send_message(
+                    message.chat.id,
+                    f"⏳ *Siz allaqachon kunlik bonusni olgansiz!*\n\nKeyingi vaqt: *{hours} soat {minutes} daqiqa*dan keyin 🕒",
+                    parse_mode='Markdown'
+                )
+                return
 
-        bonus_amount = random.randint(500, 5000)
-        cursor.execute('UPDATE users SET balance = balance + ?, last_bonus = ? WHERE user_id = ?', (bonus_amount, now, user_id))
-        conn.commit()
+            bonus_amount = random.randint(500, 5000)
+            cursor.execute('UPDATE users SET balance = balance + %s, last_bonus = %s WHERE user_id = %s;', (bonus_amount, now, user_id))
+            conn.commit()
 
     bot.send_message(
         message.chat.id,
@@ -235,10 +246,10 @@ def show_farm(message):
     user_id = message.from_user.id
     now = int(time.time())
 
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT id, animal_key, buy_time, last_harvest FROM user_animals WHERE user_id = ?', (user_id,))
-        animals = cursor.fetchall()
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT id, animal_key, buy_time, last_harvest FROM user_animals WHERE user_id = %s;', (user_id,))
+            animals = cursor.fetchall()
 
     if not animals:
         bot.send_message(
@@ -280,37 +291,37 @@ def collect_income(call):
     user_id = call.from_user.id
     now = int(time.time())
 
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT id, animal_key, buy_time, last_harvest FROM user_animals WHERE user_id = ?', (user_id,))
-        animals = cursor.fetchall()
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT id, animal_key, buy_time, last_harvest FROM user_animals WHERE user_id = %s;', (user_id,))
+            animals = cursor.fetchall()
 
-        total_uncollected = 0
+            total_uncollected = 0
 
-        for a_id, key, buy_time, last_harvest in animals:
-            max_duration = 30 * 86400
-            active_time = min(now, buy_time + max_duration)
+            for a_id, key, buy_time, last_harvest in animals:
+                max_duration = 30 * 86400
+                active_time = min(now, buy_time + max_duration)
 
-            if active_time > last_harvest:
-                seconds_passed = active_time - last_harvest
-                daily_income = ANIMALS[key]['daily']
-                income_per_second = daily_income / 86400
-                earned = int(seconds_passed * income_per_second)
-                total_uncollected += earned
-                cursor.execute('UPDATE user_animals SET last_harvest = ? WHERE id = ?', (active_time, a_id))
+                if active_time > last_harvest:
+                    seconds_passed = active_time - last_harvest
+                    daily_income = ANIMALS[key]['daily']
+                    income_per_second = daily_income / 86400
+                    earned = int(seconds_passed * income_per_second)
+                    total_uncollected += earned
+                    cursor.execute('UPDATE user_animals SET last_harvest = %s WHERE id = %s;', (active_time, a_id))
 
-        if total_uncollected > 0:
-            cursor.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (total_uncollected, user_id))
-            conn.commit()
-            bot.answer_callback_query(call.id, f"✅ {total_uncollected:,} so'm balansingizga qo'shildi!", show_alert=True)
-            bot.edit_message_text(
-                f"🎉 *Barcha daromadlar yig'ib olindi!*\n\nBalansga o'tkazildi: *{total_uncollected:,} so'm*",
-                call.message.chat.id,
-                call.message.message_id,
-                parse_mode='Markdown'
-            )
-        else:
-            bot.answer_callback_query(call.id, "⚠️ Hozircha yig'ish uchun daromad yo'q!", show_alert=True)
+            if total_uncollected > 0:
+                cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (total_uncollected, user_id))
+                conn.commit()
+                bot.answer_callback_query(call.id, f"✅ {total_uncollected:,} so'm balansingizga qo'shildi!", show_alert=True)
+                bot.edit_message_text(
+                    f"🎉 *Barcha daromadlar yig'ib olindi!*\n\nBalansga o'tkazildi: *{total_uncollected:,} so'm*",
+                    call.message.chat.id,
+                    call.message.message_id,
+                    parse_mode='Markdown'
+                )
+            else:
+                bot.answer_callback_query(call.id, "⚠️ Hozircha yig'ish uchun daromad yo'q!", show_alert=True)
 
 
 @bot.message_handler(func=lambda msg: msg.text == '👤 Profil')
@@ -411,22 +422,22 @@ def buy_animal(call):
         return
 
     now = int(time.time())
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (item['price'], user_id))
-        cursor.execute('INSERT INTO user_animals (user_id, animal_key, buy_time, last_harvest) VALUES (?, ?, ?, ?)', (user_id, key, now, now))
-        
-        cursor.execute('SELECT referrer_id FROM users WHERE user_id = ?', (user_id,))
-        ref_row = cursor.fetchone()
-        if ref_row and ref_row[0]:
-            ref_id = ref_row[0]
-            bonus = int(item['price'] * 0.10)
-            cursor.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (bonus, ref_id))
-            try:
-                bot.send_message(ref_id, f"🎉 *Do'stingiz hayvon sotib oldi!* Sizga *{bonus:,} so'm* bonus berildi!", parse_mode='Markdown')
-            except:
-                pass
-        conn.commit()
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('UPDATE users SET balance = balance - %s WHERE user_id = %s;', (item['price'], user_id))
+            cursor.execute('INSERT INTO user_animals (user_id, animal_key, buy_time, last_harvest) VALUES (%s, %s, %s, %s);', (user_id, key, now, now))
+
+            cursor.execute('SELECT referrer_id FROM users WHERE user_id = %s;', (user_id,))
+            ref_row = cursor.fetchone()
+            if ref_row and ref_row[0]:
+                ref_id = ref_row[0]
+                bonus = int(item['price'] * 0.10)
+                cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (bonus, ref_id))
+                try:
+                    bot.send_message(ref_id, f"🎉 *Do'stingiz hayvon sotib oldi!* Sizga *{bonus:,} so'm* bonus berildi!", parse_mode='Markdown')
+                except Exception:
+                    pass
+            conn.commit()
 
     bot.answer_callback_query(call.id, f"✅ {item['name']} sotib olindi!", show_alert=True)
     bot.send_message(call.message.chat.id, f"🎉 *Tabriklaymiz! Siz {item['name']} sotib oldingiz!*", parse_mode='Markdown')
