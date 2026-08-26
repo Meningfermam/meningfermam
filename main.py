@@ -1,4 +1,3 @@
-
 import os
 import time
 import random
@@ -368,6 +367,78 @@ def pay_done_callback(call):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row('⬅️ Ortga qaytish')
     bot.send_message(call.message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
+
+
+# === PUL YECHISH UCHUN QO'SHILGAN FUNKSIYALAR ===
+
+@bot.message_handler(func=lambda msg: msg.text == '💰 Pul yechish')
+def withdraw_start(message):
+    user_id = message.from_user.id
+    u = get_user(user_id)
+    
+    text = (
+        f"💰 *Pul yechib olish*\n\n"
+        f"💳 Sizning balansingiz: *{u[0]:,} so'm*\n"
+        f"⚠️ Eng kam yechib olish summasi: *10,000 so'm*\n\n"
+        f"Yechib olmoqchi bo'lgan summaniz va karta raqamingizni yuboring.\n"
+        f"Masalan: `50000 8600123456789012`"
+    )
+    user_states[user_id] = 'waiting_for_withdraw'
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('⬅️ Ortga qaytish')
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
+
+
+@bot.message_handler(func=lambda msg: user_states.get(msg.from_user.id) == 'waiting_for_withdraw')
+def handle_withdraw_request(message):
+    user_id = message.from_user.id
+    
+    if message.text == '⬅️ Ortga qaytish':
+        user_states.pop(user_id, None)
+        bot.send_message(message.chat.id, '▪️ *Bosh sahifaga xush kelibsiz.*', reply_markup=get_main_menu(), parse_mode='Markdown')
+        return
+
+    args = message.text.split()
+    if len(args) < 2 or not args[0].isdigit():
+        bot.send_message(message.chat.id, "⚠️ *Xato format!*\n\nIltimos, summa va karta raqamini quyidagicha yuboring:\n`50000 8600123456789012`", parse_mode='Markdown')
+        return
+
+    amount = int(args[0])
+    card = ' '.join(args[1:])
+    u = get_user(user_id)
+
+    if amount < 10000:
+        bot.send_message(message.chat.id, "❌ *Eng kam pul yechish summasi 10,000 so'm!*", parse_mode='Markdown')
+        return
+
+    if u[0] < amount:
+        bot.send_message(message.chat.id, "❌ *Balansingizda yetarli mablag' yo'q!*", parse_mode='Markdown')
+        return
+
+    # Balansdan ayirish
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('UPDATE users SET balance = balance - %s WHERE user_id = %s;', (amount, user_id))
+            conn.commit()
+
+    user_states.pop(user_id, None)
+    bot.send_message(message.chat.id, "✅ *Arizangiz qabul qilindi!* Admin tez orada to'lovni amalga oshiradi.", reply_markup=get_main_menu(), parse_mode='Markdown')
+
+    # Adminga xabar yuborish
+    try:
+        bot.send_message(
+            ADMIN_ID,
+            f"💸 *Yangi pul yechish so'rovi!*\n\n"
+            f"👤 Foydalanuvchi: `{user_id}`\n"
+            f"💰 Summa: *{amount:,} so'm*\n"
+            f"💳 Karta: `{card}`",
+            parse_mode='Markdown'
+        )
+    except Exception:
+        pass
+
+# ===============================================
 
 
 @bot.message_handler(func=lambda msg: msg.text == '⬅️ Ortga qaytish')
