@@ -10,7 +10,7 @@ from psycopg2.extras import RealDictCursor
 # Render'dagi Environment Variable'dan olinadi
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
-API_TOKEN = '8802630482:AAG-_S2mNc2f5E8VbNz3XepoPLSzNEzVBSQ'
+API_TOKEN = '8802630482:AAE7ev5RYWN3YfwWYhxbV855XiJy3MqF7Yw'
 BOT_USERNAME = 'Meningfeermam_bot'
 bot = telebot.TeleBot(API_TOKEN)
 
