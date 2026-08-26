@@ -343,15 +343,15 @@ def show_ref(message):
         "Do'stingizni taklif qilish orqali daromad oling!\n\n"
         "Do'stingizni botimizga taklif qiling, agar u hayvon sotib olsa, sizning hisobingizga 10% miqdorda bonus beriladi 💸\n\n"
         "Sizning referal havolangiz:\n"
-        f"`{ref_link}`\n\n"
-        "👆 Yuqoridagi havolaning ustiga bosish orqali nusxalab oling va do'stlaringizga yuboring!"
+        f"{ref_link}\n\n"
+        "👆 Yuqoridagi havolani nusxalab oling va do'stlaringizga yuboring!"
     )
 
     try:
         with open('logo.jpg', 'rb') as photo:
-            bot.send_photo(message.chat.id, photo, caption=text, parse_mode='Markdown')
+            bot.send_photo(message.chat.id, photo, caption=text)
     except:
-        bot.send_message(message.chat.id, text, parse_mode='Markdown', disable_web_page_preview=True)
+        bot.send_message(message.chat.id, text, disable_web_page_preview=True)
 
 
 @bot.message_handler(func=lambda msg: msg.text == '💸 Pul kiritish')
