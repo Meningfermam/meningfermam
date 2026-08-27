@@ -1,4 +1,3 @@
-
 import os
 import time
 import random
@@ -196,6 +195,38 @@ def cmd_start(message):
         reply_markup=get_main_menu(),
         parse_mode='Markdown',
     )
+
+# --- ADMIN PANEL: BALANS QO'SHISH ---
+@bot.message_handler(commands=['add'])
+def admin_add_balance(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    args = message.text.split()
+    if len(args) < 3:
+        bot.send_message(message.chat.id, "⚠️ *Xato format!*\nFoydalanish: `/add USER_ID SUMMA`\n*Masalan:* `/add 123456789 50000`", parse_mode='Markdown')
+        return
+
+    target_id = int(args[1])
+    amount = int(args[2])
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (amount, target_id))
+            if cursor.rowcount == 0:
+                bot.send_message(message.chat.id, "❌ Bunday foydalanuvchi topilmadi!", parse_mode='Markdown')
+                return
+            conn.commit()
+
+        bot.send_message(message.chat.id, f"✅ `{target_id}` foydalanuvchisiga *{amount:,} so'm* qo'shildi!", parse_mode='Markdown')
+        
+        try:
+            bot.send_message(target_id, f"🎉 *Sizning balansingiz {amount:,} so'mga to'ldirildi!*", parse_mode='Markdown')
+        except Exception:
+            pass
+    finally:
+        release_db(conn)
 
 @bot.message_handler(func=lambda msg: msg.text == '⬅️ Ortga qaytish')
 def back_to_main_menu(message):
