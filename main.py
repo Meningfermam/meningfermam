@@ -967,5 +967,29 @@ def buy_animal(call):
 
 if __name__ == '__main__':
     init_db()
+
+    # YANGI: "Conflict: terminated by other getUpdates request" xatosining
+    # oldini olish uchun. Bu xato odatda deploy paytida eski jarayon hali
+    # to'liq o'chmasdan turib yangisi ishga tushganda yuzaga keladi - ikkala
+    # jarayon bir vaqtda bir xil BOT_TOKEN bilan Telegramga so'rov yuborishga
+    # harakat qiladi. remove_webhook() chaqirilishi eski pollingni "yumshoq"
+    # tarzda bekor qiladi, so'ng bir necha soniya kutib, yangi polling
+    # boshlanadi - shu orqali eski jarayon bilan to'qnashuv ehtimoli kamayadi.
+    try:
+        bot.remove_webhook()
+    except Exception as e:
+        print(f'remove_webhook xatosi (e\'tiborsiz qoldirildi): {e}')
+
+    time.sleep(2)
+
     print('Bot tayyor va ishga tushdi!')
-    bot.infinity_polling()
+
+    # YANGI: agar shunga qaramay 409 xatosi kelib qolsa (masalan Render
+    # deploy paytidagi qisqa vaqtli to'qnashuv), bot butunlay o'chib
+    # qolmasin uchun polling avtomatik qayta urinadi.
+    while True:
+        try:
+            bot.infinity_polling(timeout=30, long_polling_timeout=30)
+        except Exception as e:
+            print(f'Polling xatosi, 5 soniyadan keyin qayta urinadi: {e}')
+            time.sleep(5)
