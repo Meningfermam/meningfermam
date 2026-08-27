@@ -1,3 +1,4 @@
+
 import os
 import time
 import random
@@ -34,7 +35,7 @@ ANIMALS = {
 ADMIN_ID = 925576047
 CARD_NUMBER = '5614681858174125 vs 4231200220385677'
 
-# Database Connection Pool (Ulanishlar limitiga yetib qolmaslik uchun)
+# Database Connection Pool
 db_pool = pool.SimpleConnectionPool(1, 20, DATABASE_URL, sslmode='require')
 
 def get_db():
@@ -47,6 +48,7 @@ def init_db():
     conn = get_db()
     try:
         with conn.cursor() as cursor:
+            # Jadvallarni yaratish
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -57,6 +59,12 @@ def init_db():
                     state VARCHAR(50) DEFAULT NULL
                 );
             ''')
+            
+            # Agar eski baza bo'lib state ustuni bo'lmasa, uni majburiy qo'shish
+            cursor.execute('''
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS state VARCHAR(50) DEFAULT NULL;
+            ''')
+
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS user_animals (
                     id SERIAL PRIMARY KEY,
@@ -176,11 +184,12 @@ def get_shop_inline():
 
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
-    set_user_state(message.from_user.id, None)
     args = message.text.split()
     referrer_id = args[1].replace('r', '') if len(args) > 1 and args[1].startswith('r') else None
 
     get_user(message.from_user.id, referrer_id)
+    set_user_state(message.from_user.id, None)
+    
     bot.send_message(
         message.chat.id,
         '🌾 *Mening Fermam botiga xush kelibsiz!*',
@@ -193,14 +202,14 @@ def back_to_main_menu(message):
     set_user_state(message.from_user.id, None)
     bot.send_message(message.chat.id, '▪️ *Bosh sahifaga xush kelibsiz.*', reply_markup=get_main_menu(), parse_mode='Markdown')
 
-# --- PUL YECHISH TIZIMI (STATE VA RACE CONDITION SAFE) ---
+# --- PUL YECHISH TIZIMI ---
 
 @bot.message_handler(func=lambda msg: msg.text == '💰 Pul yechish')
 def withdraw_start(message):
     user_id = message.from_user.id
     u = get_user(user_id)
     set_user_state(user_id, 'waiting_for_withdraw')
-    
+
     text = (
         f"💰 *Pul yechib olish*\n\n"
         f"💳 Sizning balansingiz: *{u[0]:,} so'm*\n"
@@ -216,7 +225,7 @@ def withdraw_start(message):
 def handle_withdraw_request(message):
     user_id = message.from_user.id
     args = message.text.split()
-    
+
     if len(args) < 2 or not args[0].isdigit():
         bot.send_message(message.chat.id, "⚠️ *Xato format!*\nNamuna: `50000 8600123456789012`", parse_mode='Markdown')
         return
@@ -231,10 +240,9 @@ def handle_withdraw_request(message):
     conn = get_db()
     try:
         with conn.cursor() as cursor:
-            # Atomic update (Race condition himoyasi)
             cursor.execute('UPDATE users SET balance = balance - %s WHERE user_id = %s AND balance >= %s RETURNING balance;', (amount, user_id, amount))
             updated = cursor.fetchone()
-            
+
             if not updated:
                 bot.send_message(message.chat.id, "❌ *Balansingizda yetarli mablag' yo'q!*", parse_mode='Markdown')
                 return
@@ -424,7 +432,6 @@ def buy_animal(call):
     conn = get_db()
     try:
         with conn.cursor() as cursor:
-            # Race condition safe balance deduction
             cursor.execute('UPDATE users SET balance = balance - %s WHERE user_id = %s AND balance >= %s RETURNING balance;', (item['price'], user_id, item['price']))
             res = cursor.fetchone()
 
@@ -433,7 +440,7 @@ def buy_animal(call):
                 return
 
             cursor.execute('INSERT INTO user_animals (user_id, animal_key, buy_time, last_harvest) VALUES (%s, %s, %s, %s);', (user_id, key, now, now))
-            
+
             cursor.execute('SELECT referrer_id FROM users WHERE user_id = %s;', (user_id,))
             ref_row = cursor.fetchone()
             if ref_row and ref_row[0]:
