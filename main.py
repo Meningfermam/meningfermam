@@ -1,7 +1,6 @@
 import os
 import re
 import time
-import random
 import telebot
 from telebot import types
 import psycopg2
@@ -64,7 +63,6 @@ def init_db():
                     balance BIGINT DEFAULT 0,
                     referrals INT DEFAULT 0,
                     referrer_id BIGINT DEFAULT NULL,
-                    last_bonus BIGINT DEFAULT 0,
                     state VARCHAR(50) DEFAULT NULL
                 );
             ''')
@@ -172,7 +170,7 @@ def get_user(user_id, referrer_id=None):
                         ref_id = None
 
                 cursor.execute(
-                    'INSERT INTO users (user_id, balance, referrals, referrer_id, last_bonus) VALUES (%s, 0, 0, %s, 0);',
+                    'INSERT INTO users (user_id, balance, referrals, referrer_id) VALUES (%s, 0, 0, %s);',
                     (user_id, ref_id)
                 )
 
@@ -220,7 +218,7 @@ def get_main_menu():
     markup.row('🐮 Hayvon sotib olish')
     markup.row('👤 Profil', '🔗 Referal')
     markup.row('💸 Pul kiritish', '💰 Pul yechish')
-    markup.row('🌾 Mening hayvonlarim (Fermam)', '🎁 Kunlik bonus')
+    markup.row('🌾 Mening hayvonlarim (Fermam)')
     return markup
 
 
@@ -663,36 +661,6 @@ def reject_withdraw(call):
 
 
 # --- QOLGAN FUNKSIYALAR ---
-
-@bot.message_handler(func=lambda msg: msg.text == '🎁 Kunlik bonus')
-def daily_bonus_handler(message):
-    user_id = message.from_user.id
-    now = int(time.time())
-    cooldown = 24 * 60 * 60
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute('SELECT last_bonus FROM users WHERE user_id = %s;', (user_id,))
-            row = cursor.fetchone()
-            last_bonus = row[0] if row else 0
-
-            if now - last_bonus < cooldown:
-                remaining_time = cooldown - (now - last_bonus)
-                hours = remaining_time // 3600
-                minutes = (remaining_time % 3600) // 60
-                bot.send_message(message.chat.id, f"⏳ *Bonus olgansiz!* Keyingi vaqt: *{hours} soat {minutes} daqiqa*", parse_mode='Markdown')
-                return
-
-            bonus_amount = random.randint(500, 5000)
-            cursor.execute('UPDATE users SET balance = balance + %s, last_bonus = %s WHERE user_id = %s;', (bonus_amount, now, user_id))
-            log_transaction(cursor, user_id, 'daily_bonus', bonus_amount)
-            conn.commit()
-
-        bot.send_message(message.chat.id, f"🎁 *Sizga {bonus_amount:,} so'm bonus berildi!*", parse_mode='Markdown')
-    finally:
-        release_db(conn)
-
 
 @bot.message_handler(func=lambda msg: msg.text == '🌾 Mening hayvonlarim (Fermam)')
 def show_farm(message):
