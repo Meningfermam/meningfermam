@@ -19,15 +19,12 @@ try:
 except Exception:
     pass
 
-# XATO EDI: 'qoy' uchun daily=3750 edi, lekin 3750*30=112500 != total(1125000).
-# Boshqa barcha hayvonlarda daily*30=total formulasi mos keladi, shuning uchun
-# to'g'ri qiymat daily=37500 bo'lishi kerak edi.
 ANIMALS = {
     'tovuq': {'name': '🐔 Tovuq', 'price': 24000, 'daily': 2400, 'total': 72000},
     'quyon': {'name': '🐇 Quyon', 'price': 45000, 'daily': 4500, 'total': 135000},
     'goz': {'name': "🪿 G'oz", 'price': 115000, 'daily': 12000, 'total': 360000},
     'echki': {'name': '🐐 Echki', 'price': 200000, 'daily': 25000, 'total': 750000},
-    'qoy': {'name': "🐑 Qo'y", 'price': 325000, 'daily': 37500, 'total': 1125000},  # TUZATILDI
+    'qoy': {'name': "🐑 Qo'y", 'price': 325000, 'daily': 37500, 'total': 1125000},
     'sigir': {'name': '🐄 Sigir', 'price': 450000, 'daily': 50000, 'total': 1500000},
     'ot': {'name': '🐎 Ot', 'price': 1200000, 'daily': 150000, 'total': 4500000},
     'tuya': {'name': '🐪 Tuya', 'price': 2400000, 'daily': 300000, 'total': 9000000},
@@ -35,11 +32,9 @@ ANIMALS = {
 }
 
 ADMIN_ID = 925576047
-# XATO EDI: '5614681858174125 vs 4231200220385677' - ikkita karta "vs" bilan
-# qo'shib yozilgan, foydalanuvchiga tushunarsiz ko'rinardi.
 CARD_NUMBER_1 = '5614 6818 5817 4125'
 CARD_NUMBER_2 = '4231 2002 2038 5677'
-CARD_OWNER = "Ism Familiya"  # kerak bo'lsa to'ldiring
+CARD_OWNER = "Ism Familiya"
 
 # Database Connection Pool
 db_pool = pool.SimpleConnectionPool(1, 20, DATABASE_URL, sslmode='require')
@@ -81,11 +76,6 @@ def init_db():
                 );
             ''')
 
-            # YANGI: pul yechish so'rovlari endi bazada saqlanadi.
-            # Avval bu so'rovlar faqat Telegram xabari sifatida yuborilardi -
-            # agar xabar yuborish xato bersa (masalan Markdown escape muammosi
-            # tufayli), so'rov butunlay yo'qolib ketardi, lekin balans
-            # allaqachon kamaytirilgan bo'lardi.
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS withdraw_requests (
                     id SERIAL PRIMARY KEY,
@@ -97,10 +87,6 @@ def init_db():
                 );
             ''')
 
-            # YANGI: pul kiritish (deposit) so'rovlari - avval summa hech
-            # qayerga yozilmasdi, admin faqat chekni ko'rib qo'lda /add
-            # qilishi kerak edi. Endi foydalanuvchi summani ham kiritadi
-            # va so'rov bazada saqlanadi.
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS deposit_requests (
                     id SERIAL PRIMARY KEY,
@@ -112,7 +98,6 @@ def init_db():
                 );
             ''')
 
-            # YANGI: barcha balans o'zgarishlari tarixi (audit uchun).
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS transactions (
                     id SERIAL PRIMARY KEY,
@@ -207,8 +192,8 @@ def get_user_animals_summary(user_id):
             key = r[0]
             counts[key] = counts.get(key, 0) + 1
 
-        res = [f"{ANIMALS[key]['name']} ({count} ta)" for key, count in counts.items()]
-        return ', '.join(res)
+        res = [f"{ANIMALS[key]['name']} ({count} ta)" for key, count in counts.items() if key in ANIMALS]
+        return ', '.join(res) if res else 'Mavjud emas'
     finally:
         release_db(conn)
 
@@ -219,9 +204,6 @@ def get_main_menu(user_id=None):
     markup.row('👤 Profil', '🔗 Referal')
     markup.row('💸 Pul kiritish', '💰 Pul yechish')
     markup.row('🌾 Mening hayvonlarim (Fermam)')
-    # YANGI: "📋 So'rovlar" tugmasi faqat adminga ko'rinadi. Bu tugma
-    # bosilganda /pending komandasi bajargan vazifani amalga oshiradi -
-    # kutilayotgan pul yechish/kiritish so'rovlari ro'yxatini ko'rsatadi.
     if user_id == ADMIN_ID:
         markup.row("📋 So'rovlar")
     return markup
@@ -250,14 +232,6 @@ def get_shop_inline():
 
 
 def escape_md(text):
-    """
-    XATO EDI: foydalanuvchi kiritgan matn (karta raqami, chek izohi va h.k.)
-    to'g'ridan-to'g'ri parse_mode='Markdown' bilan xabarga qo'yilgan edi.
-    Agar matnda '_', '*', '`', '[' kabi belgilar bo'lsa, Telegram API xato
-    qaytaradi va bu xato 'except Exception: pass' ichida yutilib, admin
-    hech qanday xabar olmay qolardi (masalan pul yechish so'rovlarida).
-    Bu funksiya Markdown uchun maxsus belgilarni ekranlaydi.
-    """
     if text is None:
         return ''
     return re.sub(r'([_*`\[\]])', r'\\\1', str(text))
@@ -279,6 +253,33 @@ def cmd_start(message):
     )
 
 
+# --- ADMIN STATISTIKASI ---
+@bot.message_handler(commands=['stats'])
+def admin_stats(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*), SUM(balance) FROM users;")
+            total_users, total_balance = cursor.fetchone()
+            
+            cursor.execute("SELECT COUNT(*) FROM user_animals;")
+            total_animals = cursor.fetchone()[0]
+
+            bot.send_message(
+                message.chat.id,
+                f"📊 *Bot Statistikasi:*\n\n"
+                f"👥 *Jami foydalanuvchilar:* {total_users:,} ta\n"
+                f"💰 *Foydalanuvchilar balansi:* {(total_balance or 0):,} so'm\n"
+                f"🐄 *Sotib olingan hayvonlar:* {total_animals:,} ta",
+                parse_mode='Markdown'
+            )
+    finally:
+        release_db(conn)
+
+
 # --- ADMIN PANEL: BALANS QO'SHISH ---
 @bot.message_handler(commands=['add'])
 def admin_add_balance(message):
@@ -290,9 +291,6 @@ def admin_add_balance(message):
         bot.send_message(message.chat.id, "⚠️ *Xato format!*\nFoydalanish: `/add USER_ID SUMMA`\n*Masalan:* `/add 123456789 50000`", parse_mode='Markdown')
         return
 
-    # XATO EDI: int(args[1]) va int(args[2]) validatsiyasiz chaqirilardi.
-    # Agar admin raqam bo'lmagan qiymat kiritsa, ValueError chiqib,
-    # handler jimgina to'xtardi va admin hech qanday javob olmasdi.
     if not args[1].lstrip('-').isdigit() or not args[2].lstrip('-').isdigit():
         bot.send_message(message.chat.id, "⚠️ *USER_ID va SUMMA faqat raqamlardan iborat bo'lishi kerak!*", parse_mode='Markdown')
         return
@@ -320,19 +318,7 @@ def admin_add_balance(message):
         release_db(conn)
 
 
-# ============================================================
-# YANGI: /pending komandasi, admin uchun matnli tasdiqlash/rad
-# etish buyruqlari (/approve_w_ID, /reject_w_ID, /approve_d_ID,
-# /reject_d_ID), va "📋 So'rovlar" tugmasi. Bular sizga bazaga
-# to'g'ridan-to'g'ri kirmasdan Telegram ichidan barcha kutilayotgan
-# so'rovlarni ko'rish va boshqarish imkonini beradi.
-# ============================================================
-
 def _send_pending_requests(chat_id):
-    """
-    /pending komandasi va "📋 So'rovlar" tugmasi ikkalasi ham shu funksiyani
-    chaqiradi - kod takrorlanmasin uchun umumiy logika shu yerda.
-    """
     conn = get_db()
     try:
         with conn.cursor() as cursor:
@@ -374,8 +360,6 @@ def _send_pending_requests(chat_id):
                 f"/approve_d_{req_id} yoki /reject_d_{req_id}\n\n"
             )
 
-    # Telegram xabar uzunligi cheklangan (4096 belgi), shuning uchun
-    # ko'p so'rov bo'lsa bo'lib-bo'lib yuboriladi.
     for i in range(0, len(text), 3800):
         bot.send_message(chat_id, text[i:i + 3800], parse_mode='Markdown')
 
@@ -387,9 +371,6 @@ def show_pending_requests(message):
     _send_pending_requests(message.chat.id)
 
 
-# YANGI: "📋 So'rovlar" tugmasi - reply-klaviaturada faqat adminga
-# ko'rinadi (get_main_menu() ichida shunday sozlangan). Bosilganda xuddi
-# /pending komandasi kabi ishlaydi.
 @bot.message_handler(func=lambda msg: msg.text == "📋 So'rovlar")
 def pending_button_handler(message):
     if message.from_user.id != ADMIN_ID:
@@ -587,9 +568,6 @@ def handle_withdraw_request(message):
     amount = int(args[0])
     card = ' '.join(args[1:])
 
-    # YANGI: karta raqami validatsiyasi - avval istalgan matn qabul
-    # qilinardi. Endi faqat raqam va bo'shliqlardan iborat, 12-19 xonali
-    # qatorlarga ruxsat beriladi.
     card_digits = re.sub(r'\s+', '', card)
     if not card_digits.isdigit() or not (12 <= len(card_digits) <= 19):
         bot.send_message(message.chat.id, "⚠️ *Karta raqami noto'g'ri!* Faqat raqamlardan iborat bo'lishi kerak.", parse_mode='Markdown')
@@ -609,10 +587,6 @@ def handle_withdraw_request(message):
                 bot.send_message(message.chat.id, "❌ *Balansingizda yetarli mablag' yo'q!*", parse_mode='Markdown')
                 return
 
-            # YANGI: so'rov endi avval bazaga yoziladi, keyingina admin
-            # xabar oladi. Shu tufayli xabar yuborish muvaffaqiyatsiz
-            # bo'lsa ham, so'rov yo'qolmaydi va keyinchalik /pending orqali
-            # ko'rish mumkin.
             cursor.execute(
                 'INSERT INTO withdraw_requests (user_id, amount, card_number, created_at) VALUES (%s, %s, %s, %s) RETURNING id;',
                 (user_id, amount, card_digits, int(time.time()))
@@ -632,8 +606,6 @@ def handle_withdraw_request(message):
             types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"approve_w_{request_id}"),
             types.InlineKeyboardButton("❌ Rad etish", callback_data=f"reject_w_{request_id}")
         )
-        # YANGI: karta raqami endi escape_md() bilan yuboriladi, shuning
-        # uchun ichida maxsus belgi bo'lsa ham Markdown xato bermaydi.
         bot.send_message(
             ADMIN_ID,
             f"💸 *Yangi pul yechish so'rovi!* (ID: {request_id})\n\n👤 ID: `{user_id}`\n💰 Summa: *{amount:,} so'm*\n💳 Karta: `{escape_md(card_digits)}`",
@@ -641,12 +613,8 @@ def handle_withdraw_request(message):
             reply_markup=markup
         )
     except Exception:
-        # So'rov bazada saqlangani uchun, xabar yuborish muvaffaqiyatsiz
-        # bo'lsa ham ma'lumot yo'qolmaydi (/pending orqali ko'rinadi).
         pass
 
-
-# --- ADMIN TASDIQLASH VA RAD ETISH HANDLERLARI (inline tugmalar) ---
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('approve_w_'))
 def approve_withdraw(call):
@@ -682,7 +650,7 @@ def reject_withdraw(call):
     )
 
 
-# --- QOLGAN FUNKSIYALAR ---
+# --- FERMA VA HAYVONLAR ---
 
 @bot.message_handler(func=lambda msg: msg.text == '🌾 Mening hayvonlarim (Fermam)')
 def show_farm(message):
@@ -703,6 +671,8 @@ def show_farm(message):
         farm_details = []
 
         for a_id, key, buy_time, last_harvest in animals:
+            if key not in ANIMALS:
+                continue
             max_duration = 30 * 86400
             active_time = min(now, buy_time + max_duration)
 
@@ -738,6 +708,8 @@ def collect_income(call):
             total_uncollected = 0
 
             for a_id, key, buy_time, last_harvest in animals:
+                if key not in ANIMALS:
+                    continue
                 max_duration = 30 * 86400
                 active_time = min(now, buy_time + max_duration)
 
@@ -860,9 +832,6 @@ def handle_check_upload(message):
         pass
 
 
-# XATO EDI: 'waiting_for_check' holatida foydalanuvchi rasm/fayl o'rniga
-# matn yuborsa, hech qanday handler ushlamasdi va u "qotib qolardi".
-# Endi bunday holatda foydalanuvchiga tushuntirish beriladi.
 @bot.message_handler(func=lambda msg: (get_user_state(msg.from_user.id) or '').startswith('waiting_for_check_'))
 def handle_check_wrong_type(message):
     bot.send_message(message.chat.id, "⚠️ *Iltimos, chekni rasm yoki fayl sifatida yuboring.*", parse_mode='Markdown')
@@ -898,6 +867,8 @@ def reject_deposit(call):
         pass
 
 
+# --- SOTIB OLISH BO'LIMI ---
+
 @bot.message_handler(func=lambda msg: msg.text == '🐮 Hayvon sotib olish')
 def show_shop(message):
     bot.send_message(message.chat.id, '🛒 *Hayvonni tanlang:*', reply_markup=get_shop_inline(), parse_mode='Markdown')
@@ -906,6 +877,8 @@ def show_shop(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('view_'))
 def view_animal(call):
     key = call.data.split('_')[1]
+    if key not in ANIMALS:
+        return
     item = ANIMALS[key]
     text = f"Nomi: {item['name']}\n\n▫️ Narxi: {item['price']:,} so'm\n▫️ Kunlik: {item['daily']:,} so'm"
     markup = types.InlineKeyboardMarkup()
@@ -922,6 +895,8 @@ def back_shop(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
 def buy_animal(call):
     key = call.data.split('_')[1]
+    if key not in ANIMALS:
+        return
     user_id = call.from_user.id
     item = ANIMALS[key]
     now = int(time.time())
@@ -958,13 +933,6 @@ def buy_animal(call):
 if __name__ == '__main__':
     init_db()
 
-    # YANGI: "Conflict: terminated by other getUpdates request" xatosining
-    # oldini olish uchun. Bu xato odatda deploy paytida eski jarayon hali
-    # to'liq o'chmasdan turib yangisi ishga tushganda yuzaga keladi - ikkala
-    # jarayon bir vaqtda bir xil BOT_TOKEN bilan Telegramga so'rov yuborishga
-    # harakat qiladi. remove_webhook() chaqirilishi eski pollingni "yumshoq"
-    # tarzda bekor qiladi, so'ng bir necha soniya kutib, yangi polling
-    # boshlanadi - shu orqali eski jarayon bilan to'qnashuv ehtimoli kamayadi.
     try:
         bot.remove_webhook()
     except Exception as e:
@@ -974,9 +942,6 @@ if __name__ == '__main__':
 
     print('Bot tayyor va ishga tushdi!')
 
-    # YANGI: agar shunga qaramay 409 xatosi kelib qolsa (masalan Render
-    # deploy paytidagi qisqa vaqtli to'qnashuv), bot butunlay o'chib
-    # qolmasin uchun polling avtomatik qayta urinadi.
     while True:
         try:
             bot.infinity_polling(timeout=30, long_polling_timeout=30)
