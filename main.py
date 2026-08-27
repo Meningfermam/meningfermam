@@ -317,6 +317,218 @@ def admin_add_balance(message):
         release_db(conn)
 
 
+# ============================================================
+# YANGI: /pending komandasi va admin uchun matnli tasdiqlash/rad
+# etish buyruqlari (/approve_w_ID, /reject_w_ID, /approve_d_ID,
+# /reject_d_ID). Bular sizga bazaga to'g'ridan-to'g'ri kirmasdan
+# Telegram ichidan barcha kutilayotgan so'rovlarni ko'rish va
+# boshqarish imkonini beradi.
+# ============================================================
+
+@bot.message_handler(commands=['pending'])
+def show_pending_requests(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, user_id, amount, card_number, created_at FROM withdraw_requests "
+                "WHERE status = 'pending' ORDER BY created_at ASC;"
+            )
+            withdrawals = cursor.fetchall()
+
+            cursor.execute(
+                "SELECT id, user_id, amount, created_at FROM deposit_requests "
+                "WHERE status = 'pending' ORDER BY created_at ASC;"
+            )
+            deposits = cursor.fetchall()
+    finally:
+        release_db(conn)
+
+    if not withdrawals and not deposits:
+        bot.send_message(message.chat.id, "✅ *Kutilayotgan so'rovlar yo'q.*", parse_mode='Markdown')
+        return
+
+    text = ""
+
+    if withdrawals:
+        text += "💰 *Kutilayotgan pul yechish so'rovlari:*\n\n"
+        for req_id, user_id, amount, card, created_at in withdrawals:
+            text += (
+                f"🆔 So'rov: `{req_id}` | 👤 User: `{user_id}`\n"
+                f"💵 Summa: *{amount:,} so'm* | 💳 Karta: `{escape_md(card)}`\n"
+                f"/approve_w_{req_id} yoki /reject_w_{req_id}\n\n"
+            )
+
+    if deposits:
+        text += "💸 *Kutilayotgan pul kiritish so'rovlari:*\n\n"
+        for req_id, user_id, amount, created_at in deposits:
+            text += (
+                f"🆔 So'rov: `{req_id}` | 👤 User: `{user_id}`\n"
+                f"💵 Da'vo qilingan summa: *{amount:,} so'm*\n"
+                f"/approve_d_{req_id} yoki /reject_d_{req_id}\n\n"
+            )
+
+    # Telegram xabar uzunligi cheklangan (4096 belgi), shuning uchun
+    # ko'p so'rov bo'lsa bo'lib-bo'lib yuboriladi.
+    for i in range(0, len(text), 3800):
+        bot.send_message(message.chat.id, text[i:i + 3800], parse_mode='Markdown')
+
+
+def _approve_withdraw_by_id(request_id, admin_chat_id, notify_admin=True):
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE withdraw_requests SET status = 'approved' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
+                (request_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                if notify_admin:
+                    bot.send_message(admin_chat_id, "⚠️ Bu so'rov topilmadi yoki allaqachon ko'rib chiqilgan.")
+                return None
+            user_id, amount = row
+            conn.commit()
+    finally:
+        release_db(conn)
+
+    if notify_admin:
+        bot.send_message(admin_chat_id, f"✅ So'rov #{request_id} tasdiqlandi ({amount:,} so'm, user {user_id}).")
+    try:
+        bot.send_message(user_id, f"✅ *Sizning {amount:,} so'm pul yechish so'rovingiz tasdiqlandi va kartangizga o'tkazildi!*", parse_mode='Markdown')
+    except Exception:
+        pass
+    return user_id, amount
+
+
+def _reject_withdraw_by_id(request_id, admin_chat_id, notify_admin=True):
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE withdraw_requests SET status = 'rejected' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
+                (request_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                if notify_admin:
+                    bot.send_message(admin_chat_id, "⚠️ Bu so'rov topilmadi yoki allaqachon ko'rib chiqilgan.")
+                return None
+            user_id, amount = row
+            cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (amount, user_id))
+            log_transaction(cursor, user_id, 'withdraw_reject_refund', amount)
+            conn.commit()
+    finally:
+        release_db(conn)
+
+    if notify_admin:
+        bot.send_message(admin_chat_id, f"❌ So'rov #{request_id} rad etildi, balans qaytarildi ({amount:,} so'm, user {user_id}).")
+    try:
+        bot.send_message(user_id, f"❌ *Sizning {amount:,} so'm pul yechish so'rovingiz rad etildi.* Mablag' balansingizga qaytarildi.", parse_mode='Markdown')
+    except Exception:
+        pass
+    return user_id, amount
+
+
+def _approve_deposit_by_id(request_id, admin_chat_id, notify_admin=True):
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE deposit_requests SET status = 'approved' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
+                (request_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                if notify_admin:
+                    bot.send_message(admin_chat_id, "⚠️ Bu so'rov topilmadi yoki allaqachon ko'rib chiqilgan.")
+                return None
+            user_id, amount = row
+            cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (amount, user_id))
+            log_transaction(cursor, user_id, 'deposit_approved', amount)
+            conn.commit()
+    finally:
+        release_db(conn)
+
+    if notify_admin:
+        bot.send_message(admin_chat_id, f"✅ Deposit #{request_id} tasdiqlandi ({amount:,} so'm, user {user_id}).")
+    try:
+        bot.send_message(user_id, f"✅ *Sizning {amount:,} so'mlik to'lovingiz tasdiqlandi va balansingizga qo'shildi!*", parse_mode='Markdown')
+    except Exception:
+        pass
+    return user_id, amount
+
+
+def _reject_deposit_by_id(request_id, admin_chat_id, notify_admin=True):
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE deposit_requests SET status = 'rejected' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
+                (request_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                if notify_admin:
+                    bot.send_message(admin_chat_id, "⚠️ Bu so'rov topilmadi yoki allaqachon ko'rib chiqilgan.")
+                return None
+            user_id, amount = row
+            conn.commit()
+    finally:
+        release_db(conn)
+
+    if notify_admin:
+        bot.send_message(admin_chat_id, f"❌ Deposit #{request_id} rad etildi ({amount:,} so'm, user {user_id}).")
+    try:
+        bot.send_message(user_id, f"❌ *Sizning {amount:,} so'mlik to'lov so'rovingiz rad etildi.* Savol bo'lsa admin bilan bog'laning.", parse_mode='Markdown')
+    except Exception:
+        pass
+    return user_id, amount
+
+
+@bot.message_handler(commands=['approve_w'])
+def approve_withdraw_cmd(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split('_')
+    if len(parts) < 3 or not parts[2].isdigit():
+        return
+    _approve_withdraw_by_id(int(parts[2]), message.chat.id)
+
+
+@bot.message_handler(commands=['reject_w'])
+def reject_withdraw_cmd(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split('_')
+    if len(parts) < 3 or not parts[2].isdigit():
+        return
+    _reject_withdraw_by_id(int(parts[2]), message.chat.id)
+
+
+@bot.message_handler(commands=['approve_d'])
+def approve_deposit_cmd(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split('_')
+    if len(parts) < 3 or not parts[2].isdigit():
+        return
+    _approve_deposit_by_id(int(parts[2]), message.chat.id)
+
+
+@bot.message_handler(commands=['reject_d'])
+def reject_deposit_cmd(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split('_')
+    if len(parts) < 3 or not parts[2].isdigit():
+        return
+    _reject_deposit_by_id(int(parts[2]), message.chat.id)
+
+
 @bot.message_handler(func=lambda msg: msg.text == '⬅️ Ortga qaytish')
 def back_to_main_menu(message):
     set_user_state(message.from_user.id, None)
@@ -379,8 +591,8 @@ def handle_withdraw_request(message):
 
             # YANGI: so'rov endi avval bazaga yoziladi, keyingina admin
             # xabar oladi. Shu tufayli xabar yuborish muvaffaqiyatsiz
-            # bo'lsa ham, so'rov yo'qolmaydi va keyinchalik tekshirish
-            # mumkin (masalan /pending_withdrawals kabi komanda bilan).
+            # bo'lsa ham, so'rov yo'qolmaydi va keyinchalik /pending orqali
+            # ko'rish mumkin.
             cursor.execute(
                 'INSERT INTO withdraw_requests (user_id, amount, card_number, created_at) VALUES (%s, %s, %s, %s) RETURNING id;',
                 (user_id, amount, card_digits, int(time.time()))
@@ -410,35 +622,21 @@ def handle_withdraw_request(message):
         )
     except Exception:
         # So'rov bazada saqlangani uchun, xabar yuborish muvaffaqiyatsiz
-        # bo'lsa ham ma'lumot yo'qolmaydi.
+        # bo'lsa ham ma'lumot yo'qolmaydi (/pending orqali ko'rinadi).
         pass
 
 
-# --- ADMIN TASDIQLASH VA RAD ETISH HANDLERLARI ---
+# --- ADMIN TASDIQLASH VA RAD ETISH HANDLERLARI (inline tugmalar) ---
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('approve_w_'))
 def approve_withdraw(call):
     if call.from_user.id != ADMIN_ID:
         return
-
     request_id = int(call.data.split('_')[2])
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                "UPDATE withdraw_requests SET status = 'approved' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
-                (request_id,)
-            )
-            row = cursor.fetchone()
-            if not row:
-                bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
-                return
-            user_id, amount = row
-            conn.commit()
-    finally:
-        release_db(conn)
-
+    result = _approve_withdraw_by_id(request_id, call.message.chat.id, notify_admin=False)
+    if result is None:
+        bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
+        return
     bot.edit_message_text(
         f"{call.message.text}\n\n✅ *STATUS: ADMIN TARAFIDAN TO'LANDI*",
         call.message.chat.id,
@@ -446,57 +644,22 @@ def approve_withdraw(call):
         parse_mode='Markdown'
     )
 
-    try:
-        bot.send_message(
-            user_id,
-            f"✅ *Sizning {amount:,} so'm pul yechish so'rovingiz tasdiqlandi va kartangizga o'tkazildi!*",
-            parse_mode='Markdown'
-        )
-    except Exception:
-        pass
-
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('reject_w_'))
 def reject_withdraw(call):
     if call.from_user.id != ADMIN_ID:
         return
-
     request_id = int(call.data.split('_')[2])
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                "UPDATE withdraw_requests SET status = 'rejected' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
-                (request_id,)
-            )
-            row = cursor.fetchone()
-            if not row:
-                bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
-                return
-            user_id, amount = row
-
-            cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (amount, user_id))
-            log_transaction(cursor, user_id, 'withdraw_reject_refund', amount)
-            conn.commit()
-    finally:
-        release_db(conn)
-
+    result = _reject_withdraw_by_id(request_id, call.message.chat.id, notify_admin=False)
+    if result is None:
+        bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
+        return
     bot.edit_message_text(
         f"{call.message.text}\n\n❌ *STATUS: RAD ETILDI (Balans qaytarildi)*",
         call.message.chat.id,
         call.message.message_id,
         parse_mode='Markdown'
     )
-
-    try:
-        bot.send_message(
-            user_id,
-            f"❌ *Sizning {amount:,} so'm pul yechish so'rovingiz rad etildi.* Mablag' balansingizga qaytarildi.",
-            parse_mode='Markdown'
-        )
-    except Exception:
-        pass
 
 
 # --- QOLGAN FUNKSIYALAR ---
@@ -719,34 +882,13 @@ def handle_check_wrong_type(message):
 def approve_deposit(call):
     if call.from_user.id != ADMIN_ID:
         return
-
     request_id = int(call.data.split('_')[2])
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                "UPDATE deposit_requests SET status = 'approved' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
-                (request_id,)
-            )
-            row = cursor.fetchone()
-            if not row:
-                bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
-                return
-            user_id, amount = row
-            cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (amount, user_id))
-            log_transaction(cursor, user_id, 'deposit_approved', amount)
-            conn.commit()
-    finally:
-        release_db(conn)
-
+    result = _approve_deposit_by_id(request_id, call.message.chat.id, notify_admin=False)
+    if result is None:
+        bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
+        return
     try:
         bot.edit_message_caption(f"{call.message.caption}\n\n✅ *STATUS: TASDIQLANDI*", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-    except Exception:
-        pass
-
-    try:
-        bot.send_message(user_id, f"✅ *Sizning {amount:,} so'mlik to'lovingiz tasdiqlandi va balansingizga qo'shildi!*", parse_mode='Markdown')
     except Exception:
         pass
 
@@ -755,31 +897,13 @@ def approve_deposit(call):
 def reject_deposit(call):
     if call.from_user.id != ADMIN_ID:
         return
-
     request_id = int(call.data.split('_')[2])
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                "UPDATE deposit_requests SET status = 'rejected' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
-                (request_id,)
-            )
-            row = cursor.fetchone()
-            if not row:
-                bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
-                return
-            user_id, amount = row
-    finally:
-        release_db(conn)
-
+    result = _reject_deposit_by_id(request_id, call.message.chat.id, notify_admin=False)
+    if result is None:
+        bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
+        return
     try:
         bot.edit_message_caption(f"{call.message.caption}\n\n❌ *STATUS: RAD ETILDI*", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-    except Exception:
-        pass
-
-    try:
-        bot.send_message(user_id, f"❌ *Sizning {amount:,} so'mlik to'lov so'rovingiz rad etildi.* Savol bo'lsa admin bilan bog'laning.", parse_mode='Markdown')
     except Exception:
         pass
 
