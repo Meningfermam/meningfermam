@@ -286,9 +286,75 @@ def handle_withdraw_request(message):
     bot.send_message(message.chat.id, "✅ *Arizangiz qabul qilindi!* Admin tez orada to'lovni amalga oshiradi.", reply_markup=get_main_menu(), parse_mode='Markdown')
 
     try:
+        markup = types.InlineKeyboardMarkup()
+        markup.row(
+            types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"approve_w_{user_id}_{amount}"),
+            types.InlineKeyboardButton("❌ Rad etish", callback_data=f"reject_w_{user_id}_{amount}")
+        )
         bot.send_message(
             ADMIN_ID,
             f"💸 *Yangi pul yechish so'rovi!*\n\n👤 ID: `{user_id}`\n💰 Summa: *{amount:,} so'm*\n💳 Karta: `{card}`",
+            parse_mode='Markdown',
+            reply_markup=markup
+        )
+    except Exception:
+        pass
+
+# --- ADMIN TASDIQLASH VA RAD ETISH HANDLERLARI ---
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('approve_w_'))
+def approve_withdraw(call):
+    if call.from_user.id != ADMIN_ID:
+        return
+
+    _, _, user_id, amount = call.data.split('_')
+    user_id = int(user_id)
+    amount = int(amount)
+
+    bot.edit_message_text(
+        f"{call.message.text}\n\n✅ *STATUS: ADMIN TARAFIDAN TO'LANDI*",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode='Markdown'
+    )
+
+    try:
+        bot.send_message(
+            user_id,
+            f"✅ *Sizning {amount:,} so'm pul yechish so'rovingiz tasdiqlandi va kartangizga o'tkazildi!*",
+            parse_mode='Markdown'
+        )
+    except Exception:
+        pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('reject_w_'))
+def reject_withdraw(call):
+    if call.from_user.id != ADMIN_ID:
+        return
+
+    _, _, user_id, amount = call.data.split('_')
+    user_id = int(user_id)
+    amount = int(amount)
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (amount, user_id))
+            conn.commit()
+    finally:
+        release_db(conn)
+
+    bot.edit_message_text(
+        f"{call.message.text}\n\n❌ *STATUS: RAD ETILDI (Balans qaytarildi)*",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode='Markdown'
+    )
+
+    try:
+        bot.send_message(
+            user_id,
+            f"❌ *Sizning {amount:,} so'm pul yechish so'rovingiz rad etildi.* Mablag' balansingizga qaytarildi.",
             parse_mode='Markdown'
         )
     except Exception:
