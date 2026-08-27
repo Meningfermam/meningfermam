@@ -213,12 +213,17 @@ def get_user_animals_summary(user_id):
         release_db(conn)
 
 
-def get_main_menu():
+def get_main_menu(user_id=None):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row('🐮 Hayvon sotib olish')
     markup.row('👤 Profil', '🔗 Referal')
     markup.row('💸 Pul kiritish', '💰 Pul yechish')
     markup.row('🌾 Mening hayvonlarim (Fermam)')
+    # YANGI: "📋 So'rovlar" tugmasi faqat adminga ko'rinadi. Bu tugma
+    # bosilganda /pending komandasi bajargan vazifani amalga oshiradi -
+    # kutilayotgan pul yechish/kiritish so'rovlari ro'yxatini ko'rsatadi.
+    if user_id == ADMIN_ID:
+        markup.row("📋 So'rovlar")
     return markup
 
 
@@ -269,7 +274,7 @@ def cmd_start(message):
     bot.send_message(
         message.chat.id,
         '🌾 *Mening Fermam botiga xush kelibsiz!*',
-        reply_markup=get_main_menu(),
+        reply_markup=get_main_menu(message.from_user.id),
         parse_mode='Markdown',
     )
 
@@ -316,18 +321,18 @@ def admin_add_balance(message):
 
 
 # ============================================================
-# YANGI: /pending komandasi va admin uchun matnli tasdiqlash/rad
+# YANGI: /pending komandasi, admin uchun matnli tasdiqlash/rad
 # etish buyruqlari (/approve_w_ID, /reject_w_ID, /approve_d_ID,
-# /reject_d_ID). Bular sizga bazaga to'g'ridan-to'g'ri kirmasdan
-# Telegram ichidan barcha kutilayotgan so'rovlarni ko'rish va
-# boshqarish imkonini beradi.
+# /reject_d_ID), va "📋 So'rovlar" tugmasi. Bular sizga bazaga
+# to'g'ridan-to'g'ri kirmasdan Telegram ichidan barcha kutilayotgan
+# so'rovlarni ko'rish va boshqarish imkonini beradi.
 # ============================================================
 
-@bot.message_handler(commands=['pending'])
-def show_pending_requests(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
+def _send_pending_requests(chat_id):
+    """
+    /pending komandasi va "📋 So'rovlar" tugmasi ikkalasi ham shu funksiyani
+    chaqiradi - kod takrorlanmasin uchun umumiy logika shu yerda.
+    """
     conn = get_db()
     try:
         with conn.cursor() as cursor:
@@ -346,7 +351,7 @@ def show_pending_requests(message):
         release_db(conn)
 
     if not withdrawals and not deposits:
-        bot.send_message(message.chat.id, "✅ *Kutilayotgan so'rovlar yo'q.*", parse_mode='Markdown')
+        bot.send_message(chat_id, "✅ *Kutilayotgan so'rovlar yo'q.*", parse_mode='Markdown')
         return
 
     text = ""
@@ -372,7 +377,24 @@ def show_pending_requests(message):
     # Telegram xabar uzunligi cheklangan (4096 belgi), shuning uchun
     # ko'p so'rov bo'lsa bo'lib-bo'lib yuboriladi.
     for i in range(0, len(text), 3800):
-        bot.send_message(message.chat.id, text[i:i + 3800], parse_mode='Markdown')
+        bot.send_message(chat_id, text[i:i + 3800], parse_mode='Markdown')
+
+
+@bot.message_handler(commands=['pending'])
+def show_pending_requests(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    _send_pending_requests(message.chat.id)
+
+
+# YANGI: "📋 So'rovlar" tugmasi - reply-klaviaturada faqat adminga
+# ko'rinadi (get_main_menu() ichida shunday sozlangan). Bosilganda xuddi
+# /pending komandasi kabi ishlaydi.
+@bot.message_handler(func=lambda msg: msg.text == "📋 So'rovlar")
+def pending_button_handler(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    _send_pending_requests(message.chat.id)
 
 
 def _approve_withdraw_by_id(request_id, admin_chat_id, notify_admin=True):
@@ -530,7 +552,7 @@ def reject_deposit_cmd(message):
 @bot.message_handler(func=lambda msg: msg.text == '⬅️ Ortga qaytish')
 def back_to_main_menu(message):
     set_user_state(message.from_user.id, None)
-    bot.send_message(message.chat.id, '▪️ *Bosh sahifaga xush kelibsiz.*', reply_markup=get_main_menu(), parse_mode='Markdown')
+    bot.send_message(message.chat.id, '▪️ *Bosh sahifaga xush kelibsiz.*', reply_markup=get_main_menu(message.from_user.id), parse_mode='Markdown')
 
 
 # --- PUL YECHISH TIZIMI ---
@@ -602,7 +624,7 @@ def handle_withdraw_request(message):
         release_db(conn)
 
     set_user_state(user_id, None)
-    bot.send_message(message.chat.id, "✅ *Arizangiz qabul qilindi!* Admin tez orada to'lovni amalga oshiradi.", reply_markup=get_main_menu(), parse_mode='Markdown')
+    bot.send_message(message.chat.id, "✅ *Arizangiz qabul qilindi!* Admin tez orada to'lovni amalga oshiradi.", reply_markup=get_main_menu(user_id), parse_mode='Markdown')
 
     try:
         markup = types.InlineKeyboardMarkup()
@@ -821,7 +843,7 @@ def handle_check_upload(message):
         release_db(conn)
 
     set_user_state(message.from_user.id, None)
-    bot.send_message(message.chat.id, "✅ *Chek qabul qilindi.* Admin tez orada tasdiqlaydi.", reply_markup=get_main_menu(), parse_mode='Markdown')
+    bot.send_message(message.chat.id, "✅ *Chek qabul qilindi.* Admin tez orada tasdiqlaydi.", reply_markup=get_main_menu(message.from_user.id), parse_mode='Markdown')
 
     try:
         markup = types.InlineKeyboardMarkup()
