@@ -227,23 +227,111 @@ def cmd_start(message):
 def admin_stats(message):
     if message.from_user.id != ADMIN_ID:
         return
+
+    now = int(time.time())
+    day_ago = now - 86400
+    week_ago = now - 7 * 86400
+
     conn = get_db()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*), SUM(balance) FROM users;")
+            # Umumiy foydalanuvchilar
+            cursor.execute("SELECT COUNT(*), COALESCE(SUM(balance), 0) FROM users;")
             total_users, total_balance = cursor.fetchone()
+
+            # Referal orqali qo'shilganlar
+            cursor.execute("SELECT COUNT(*) FROM users WHERE referrer_id IS NOT NULL;")
+            total_referred = cursor.fetchone()[0]
+
+            # Jami hayvonlar
             cursor.execute("SELECT COUNT(*) FROM user_animals;")
             total_animals = cursor.fetchone()[0]
-            bot.send_message(
-                message.chat.id,
-                f"📊 *Bot Statistikasi:*\n\n"
-                f"👥 *Jami foydalanuvchilar:* {total_users:,} ta\n"
-                f"💰 *Foydalanuvchilar balansi:* {(total_balance or 0):,} so'm\n"
-                f"🐄 *Sotib olingan hayvonlar:* {total_animals:,} ta",
-                parse_mode='Markdown'
-            )
+
+            # Har bir hayvon turi bo'yicha sotuvlar
+            cursor.execute("""
+                SELECT animal_key, COUNT(*) FROM user_animals
+                GROUP BY animal_key ORDER BY COUNT(*) DESC;
+            """)
+            animal_counts = cursor.fetchall()
+
+            # Depozitlar
+            cursor.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending'),
+                    COUNT(*) FILTER (WHERE status = 'awaiting_check'),
+                    COUNT(*) FILTER (WHERE status = 'approved'),
+                    COUNT(*) FILTER (WHERE status = 'rejected'),
+                    COALESCE(SUM(amount) FILTER (WHERE status = 'approved'), 0)
+                FROM deposit_requests;
+            """)
+            dep_pending, dep_awaiting, dep_approved, dep_rejected, dep_approved_sum = cursor.fetchone()
+
+            # Pul yechish so'rovlari
+            cursor.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending'),
+                    COUNT(*) FILTER (WHERE status = 'approved'),
+                    COUNT(*) FILTER (WHERE status = 'rejected'),
+                    COALESCE(SUM(amount) FILTER (WHERE status = 'approved'), 0),
+                    COALESCE(SUM(amount) FILTER (WHERE status = 'pending'), 0)
+                FROM withdraw_requests;
+            """)
+            w_pending, w_approved, w_rejected, w_approved_sum, w_pending_sum = cursor.fetchone()
+
+            # Tranzaksiyalar bo'yicha jami harvest (yig'ilgan daromad)
+            cursor.execute("""
+                SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE type = 'harvest';
+            """)
+            total_harvested = cursor.fetchone()[0]
+
+            # Referal bonuslari
+            cursor.execute("""
+                SELECT COALESCE(SUM(amount), 0), COUNT(*) FROM transactions WHERE type = 'ref_bonus';
+            """)
+            ref_bonus_sum, ref_bonus_count = cursor.fetchone()
+
+            # Admin tomonidan qo'shilgan balans
+            cursor.execute("""
+                SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE type = 'admin_add';
+            """)
+            admin_added_sum = cursor.fetchone()[0]
+
+        conn.commit()
     finally:
         release_db(conn)
+
+    animal_lines = []
+    for key, count in animal_counts:
+        name = ANIMALS.get(key, {}).get('name', key)
+        animal_lines.append(f"   • {name}: {count:,} ta")
+    animals_breakdown = '\n'.join(animal_lines) if animal_lines else '   • Mavjud emas'
+
+    text = (
+        f"📊 *Bot Statistikasi (to'liq):*\n\n"
+        f"👥 *Foydalanuvchilar:*\n"
+        f"   • Jami: {total_users:,} ta\n"
+        f"   • Referal orqali qo'shilgan: {total_referred:,} ta\n\n"
+        f"💰 *Balanslar:*\n"
+        f"   • Foydalanuvchilardagi umumiy balans: {total_balance:,} so'm\n"
+        f"   • Admin tomonidan qo'shilgan: {admin_added_sum:,} so'm\n"
+        f"   • Yig'ilgan (harvest) daromad: {total_harvested:,} so'm\n"
+        f"   • Referal bonuslari: {ref_bonus_sum:,} so'm ({ref_bonus_count:,} ta)\n\n"
+        f"🐄 *Hayvonlar:*\n"
+        f"   • Jami sotib olingan: {total_animals:,} ta\n"
+        f"{animals_breakdown}\n\n"
+        f"💸 *Pul kiritish (depozit) so'rovlari:*\n"
+        f"   • Kutilmoqda (chek yuborilgan): {dep_pending:,} ta\n"
+        f"   • Chek kutilmoqda: {dep_awaiting:,} ta\n"
+        f"   • Tasdiqlangan: {dep_approved:,} ta ({dep_approved_sum:,} so'm)\n"
+        f"   • Rad etilgan: {dep_rejected:,} ta\n\n"
+        f"💵 *Pul yechish so'rovlari:*\n"
+        f"   • Kutilmoqda: {w_pending:,} ta ({w_pending_sum:,} so'm)\n"
+        f"   • Tasdiqlangan: {w_approved:,} ta ({w_approved_sum:,} so'm)\n"
+        f"   • Rad etilgan: {w_rejected:,} ta"
+    )
+
+    for i in range(0, len(text), 3800):
+        bot.send_message(message.chat.id, text[i:i + 3800], parse_mode='Markdown')
 
 @bot.message_handler(commands=['add'])
 def admin_add_balance(message):
@@ -783,7 +871,7 @@ def view_animal(call):
     if key not in ANIMALS:
         return
     item = ANIMALS[key]
-    
+
     text = (
         f"Nomi: {item['name']}\n\n"
         f"▫️ Narxi: {item['price']:,} so'm\n"
@@ -791,11 +879,11 @@ def view_animal(call):
         f"▫️ Jami daromad (30 kun): {item['total']:,} so'm\n"
         f"▫️ Ishlash muddati: 30 kun"
     )
-    
+
     markup = types.InlineKeyboardMarkup()
     markup.row(types.InlineKeyboardButton('💸 Sotib olish', callback_data=f'buy_{key}'))
     markup.row(types.InlineKeyboardButton('⬅️ Orqaga', callback_data='back_to_shop'))
-    
+
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data == 'back_to_shop')
