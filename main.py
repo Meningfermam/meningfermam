@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import random
 import telebot
@@ -19,12 +20,15 @@ try:
 except Exception:
     pass
 
+# XATO EDI: 'qoy' uchun daily=3750 edi, lekin 3750*30=112500 != total(1125000).
+# Boshqa barcha hayvonlarda daily*30=total formulasi mos keladi, shuning uchun
+# to'g'ri qiymat daily=37500 bo'lishi kerak edi.
 ANIMALS = {
     'tovuq': {'name': '🐔 Tovuq', 'price': 24000, 'daily': 2400, 'total': 72000},
     'quyon': {'name': '🐇 Quyon', 'price': 45000, 'daily': 4500, 'total': 135000},
     'goz': {'name': "🪿 G'oz", 'price': 115000, 'daily': 12000, 'total': 360000},
     'echki': {'name': '🐐 Echki', 'price': 200000, 'daily': 25000, 'total': 750000},
-    'qoy': {'name': "🐑 Qo'y", 'price': 325000, 'daily': 3750, 'total': 1125000},
+    'qoy': {'name': "🐑 Qo'y", 'price': 325000, 'daily': 37500, 'total': 1125000},  # TUZATILDI
     'sigir': {'name': '🐄 Sigir', 'price': 450000, 'daily': 50000, 'total': 1500000},
     'ot': {'name': '🐎 Ot', 'price': 1200000, 'daily': 150000, 'total': 4500000},
     'tuya': {'name': '🐪 Tuya', 'price': 2400000, 'daily': 300000, 'total': 9000000},
@@ -32,22 +36,28 @@ ANIMALS = {
 }
 
 ADMIN_ID = 925576047
-CARD_NUMBER = '5614681858174125 vs 4231200220385677'
+# XATO EDI: '5614681858174125 vs 4231200220385677' - ikkita karta "vs" bilan
+# qo'shib yozilgan, foydalanuvchiga tushunarsiz ko'rinardi.
+CARD_NUMBER_1 = '5614 6818 5817 4125'
+CARD_NUMBER_2 = '4231 2002 2038 5677'
+CARD_OWNER = "Ism Familiya"  # kerak bo'lsa to'ldiring
 
 # Database Connection Pool
 db_pool = pool.SimpleConnectionPool(1, 20, DATABASE_URL, sslmode='require')
 
+
 def get_db():
     return db_pool.getconn()
 
+
 def release_db(conn):
     db_pool.putconn(conn)
+
 
 def init_db():
     conn = get_db()
     try:
         with conn.cursor() as cursor:
-            # Jadvallarni yaratish
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -58,8 +68,7 @@ def init_db():
                     state VARCHAR(50) DEFAULT NULL
                 );
             ''')
-            
-            # Agar eski baza bo'lib state ustuni bo'lmasa, uni majburiy qo'shish
+
             cursor.execute('''
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS state VARCHAR(50) DEFAULT NULL;
             ''')
@@ -73,9 +82,59 @@ def init_db():
                     last_harvest BIGINT
                 );
             ''')
+
+            # YANGI: pul yechish so'rovlari endi bazada saqlanadi.
+            # Avval bu so'rovlar faqat Telegram xabari sifatida yuborilardi -
+            # agar xabar yuborish xato bersa (masalan Markdown escape muammosi
+            # tufayli), so'rov butunlay yo'qolib ketardi, lekin balans
+            # allaqachon kamaytirilgan bo'lardi.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS withdraw_requests (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
+                    amount BIGINT,
+                    card_number VARCHAR(100),
+                    status VARCHAR(20) DEFAULT 'pending',
+                    created_at BIGINT
+                );
+            ''')
+
+            # YANGI: pul kiritish (deposit) so'rovlari - avval summa hech
+            # qayerga yozilmasdi, admin faqat chekni ko'rib qo'lda /add
+            # qilishi kerak edi. Endi foydalanuvchi summani ham kiritadi
+            # va so'rov bazada saqlanadi.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS deposit_requests (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
+                    amount BIGINT,
+                    file_id VARCHAR(255),
+                    status VARCHAR(20) DEFAULT 'pending',
+                    created_at BIGINT
+                );
+            ''')
+
+            # YANGI: barcha balans o'zgarishlari tarixi (audit uchun).
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS transactions (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
+                    type VARCHAR(30),
+                    amount BIGINT,
+                    created_at BIGINT
+                );
+            ''')
             conn.commit()
     finally:
         release_db(conn)
+
+
+def log_transaction(cursor, user_id, tx_type, amount):
+    cursor.execute(
+        'INSERT INTO transactions (user_id, type, amount, created_at) VALUES (%s, %s, %s, %s);',
+        (user_id, tx_type, amount, int(time.time()))
+    )
+
 
 def set_user_state(user_id, state):
     conn = get_db()
@@ -86,6 +145,7 @@ def set_user_state(user_id, state):
     finally:
         release_db(conn)
 
+
 def get_user_state(user_id):
     conn = get_db()
     try:
@@ -95,6 +155,7 @@ def get_user_state(user_id):
             return row[0] if row else None
     finally:
         release_db(conn)
+
 
 def get_user(user_id, referrer_id=None):
     conn = get_db()
@@ -132,6 +193,7 @@ def get_user(user_id, referrer_id=None):
     finally:
         release_db(conn)
 
+
 def get_user_animals_summary(user_id):
     conn = get_db()
     try:
@@ -152,6 +214,7 @@ def get_user_animals_summary(user_id):
     finally:
         release_db(conn)
 
+
 def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row('🐮 Hayvon sotib olish')
@@ -159,6 +222,7 @@ def get_main_menu():
     markup.row('💸 Pul kiritish', '💰 Pul yechish')
     markup.row('🌾 Mening hayvonlarim (Fermam)', '🎁 Kunlik bonus')
     return markup
+
 
 def get_shop_inline():
     markup = types.InlineKeyboardMarkup()
@@ -181,6 +245,21 @@ def get_shop_inline():
     markup.row(types.InlineKeyboardButton('🐂 Buqa', callback_data='view_buqa'))
     return markup
 
+
+def escape_md(text):
+    """
+    XATO EDI: foydalanuvchi kiritgan matn (karta raqami, chek izohi va h.k.)
+    to'g'ridan-to'g'ri parse_mode='Markdown' bilan xabarga qo'yilgan edi.
+    Agar matnda '_', '*', '`', '[' kabi belgilar bo'lsa, Telegram API xato
+    qaytaradi va bu xato 'except Exception: pass' ichida yutilib, admin
+    hech qanday xabar olmay qolardi (masalan pul yechish so'rovlarida).
+    Bu funksiya Markdown uchun maxsus belgilarni ekranlaydi.
+    """
+    if text is None:
+        return ''
+    return re.sub(r'([_*`\[\]])', r'\\\1', str(text))
+
+
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
     args = message.text.split()
@@ -188,13 +267,14 @@ def cmd_start(message):
 
     get_user(message.from_user.id, referrer_id)
     set_user_state(message.from_user.id, None)
-    
+
     bot.send_message(
         message.chat.id,
         '🌾 *Mening Fermam botiga xush kelibsiz!*',
         reply_markup=get_main_menu(),
         parse_mode='Markdown',
     )
+
 
 # --- ADMIN PANEL: BALANS QO'SHISH ---
 @bot.message_handler(commands=['add'])
@@ -207,6 +287,13 @@ def admin_add_balance(message):
         bot.send_message(message.chat.id, "⚠️ *Xato format!*\nFoydalanish: `/add USER_ID SUMMA`\n*Masalan:* `/add 123456789 50000`", parse_mode='Markdown')
         return
 
+    # XATO EDI: int(args[1]) va int(args[2]) validatsiyasiz chaqirilardi.
+    # Agar admin raqam bo'lmagan qiymat kiritsa, ValueError chiqib,
+    # handler jimgina to'xtardi va admin hech qanday javob olmasdi.
+    if not args[1].lstrip('-').isdigit() or not args[2].lstrip('-').isdigit():
+        bot.send_message(message.chat.id, "⚠️ *USER_ID va SUMMA faqat raqamlardan iborat bo'lishi kerak!*", parse_mode='Markdown')
+        return
+
     target_id = int(args[1])
     amount = int(args[2])
 
@@ -217,10 +304,11 @@ def admin_add_balance(message):
             if cursor.rowcount == 0:
                 bot.send_message(message.chat.id, "❌ Bunday foydalanuvchi topilmadi!", parse_mode='Markdown')
                 return
+            log_transaction(cursor, target_id, 'admin_add', amount)
             conn.commit()
 
         bot.send_message(message.chat.id, f"✅ `{target_id}` foydalanuvchisiga *{amount:,} so'm* qo'shildi!", parse_mode='Markdown')
-        
+
         try:
             bot.send_message(target_id, f"🎉 *Sizning balansingiz {amount:,} so'mga to'ldirildi!*", parse_mode='Markdown')
         except Exception:
@@ -228,10 +316,12 @@ def admin_add_balance(message):
     finally:
         release_db(conn)
 
+
 @bot.message_handler(func=lambda msg: msg.text == '⬅️ Ortga qaytish')
 def back_to_main_menu(message):
     set_user_state(message.from_user.id, None)
     bot.send_message(message.chat.id, '▪️ *Bosh sahifaga xush kelibsiz.*', reply_markup=get_main_menu(), parse_mode='Markdown')
+
 
 # --- PUL YECHISH TIZIMI ---
 
@@ -252,6 +342,7 @@ def withdraw_start(message):
     markup.row('⬅️ Ortga qaytish')
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
 
+
 @bot.message_handler(func=lambda msg: get_user_state(msg.from_user.id) == 'waiting_for_withdraw')
 def handle_withdraw_request(message):
     user_id = message.from_user.id
@@ -263,6 +354,14 @@ def handle_withdraw_request(message):
 
     amount = int(args[0])
     card = ' '.join(args[1:])
+
+    # YANGI: karta raqami validatsiyasi - avval istalgan matn qabul
+    # qilinardi. Endi faqat raqam va bo'shliqlardan iborat, 12-19 xonali
+    # qatorlarga ruxsat beriladi.
+    card_digits = re.sub(r'\s+', '', card)
+    if not card_digits.isdigit() or not (12 <= len(card_digits) <= 19):
+        bot.send_message(message.chat.id, "⚠️ *Karta raqami noto'g'ri!* Faqat raqamlardan iborat bo'lishi kerak.", parse_mode='Markdown')
+        return
 
     if amount < 10000:
         bot.send_message(message.chat.id, "❌ *Eng kam pul yechish summasi 10,000 so'm!*", parse_mode='Markdown')
@@ -278,6 +377,16 @@ def handle_withdraw_request(message):
                 bot.send_message(message.chat.id, "❌ *Balansingizda yetarli mablag' yo'q!*", parse_mode='Markdown')
                 return
 
+            # YANGI: so'rov endi avval bazaga yoziladi, keyingina admin
+            # xabar oladi. Shu tufayli xabar yuborish muvaffaqiyatsiz
+            # bo'lsa ham, so'rov yo'qolmaydi va keyinchalik tekshirish
+            # mumkin (masalan /pending_withdrawals kabi komanda bilan).
+            cursor.execute(
+                'INSERT INTO withdraw_requests (user_id, amount, card_number, created_at) VALUES (%s, %s, %s, %s) RETURNING id;',
+                (user_id, amount, card_digits, int(time.time()))
+            )
+            request_id = cursor.fetchone()[0]
+            log_transaction(cursor, user_id, 'withdraw_hold', -amount)
             conn.commit()
     finally:
         release_db(conn)
@@ -288,17 +397,22 @@ def handle_withdraw_request(message):
     try:
         markup = types.InlineKeyboardMarkup()
         markup.row(
-            types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"approve_w_{user_id}_{amount}"),
-            types.InlineKeyboardButton("❌ Rad etish", callback_data=f"reject_w_{user_id}_{amount}")
+            types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"approve_w_{request_id}"),
+            types.InlineKeyboardButton("❌ Rad etish", callback_data=f"reject_w_{request_id}")
         )
+        # YANGI: karta raqami endi escape_md() bilan yuboriladi, shuning
+        # uchun ichida maxsus belgi bo'lsa ham Markdown xato bermaydi.
         bot.send_message(
             ADMIN_ID,
-            f"💸 *Yangi pul yechish so'rovi!*\n\n👤 ID: `{user_id}`\n💰 Summa: *{amount:,} so'm*\n💳 Karta: `{card}`",
+            f"💸 *Yangi pul yechish so'rovi!* (ID: {request_id})\n\n👤 ID: `{user_id}`\n💰 Summa: *{amount:,} so'm*\n💳 Karta: `{escape_md(card_digits)}`",
             parse_mode='Markdown',
             reply_markup=markup
         )
     except Exception:
+        # So'rov bazada saqlangani uchun, xabar yuborish muvaffaqiyatsiz
+        # bo'lsa ham ma'lumot yo'qolmaydi.
         pass
+
 
 # --- ADMIN TASDIQLASH VA RAD ETISH HANDLERLARI ---
 
@@ -307,9 +421,23 @@ def approve_withdraw(call):
     if call.from_user.id != ADMIN_ID:
         return
 
-    _, _, user_id, amount = call.data.split('_')
-    user_id = int(user_id)
-    amount = int(amount)
+    request_id = int(call.data.split('_')[2])
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE withdraw_requests SET status = 'approved' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
+                (request_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
+                return
+            user_id, amount = row
+            conn.commit()
+    finally:
+        release_db(conn)
 
     bot.edit_message_text(
         f"{call.message.text}\n\n✅ *STATUS: ADMIN TARAFIDAN TO'LANDI*",
@@ -327,19 +455,29 @@ def approve_withdraw(call):
     except Exception:
         pass
 
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('reject_w_'))
 def reject_withdraw(call):
     if call.from_user.id != ADMIN_ID:
         return
 
-    _, _, user_id, amount = call.data.split('_')
-    user_id = int(user_id)
-    amount = int(amount)
+    request_id = int(call.data.split('_')[2])
 
     conn = get_db()
     try:
         with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE withdraw_requests SET status = 'rejected' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
+                (request_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
+                return
+            user_id, amount = row
+
             cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (amount, user_id))
+            log_transaction(cursor, user_id, 'withdraw_reject_refund', amount)
             conn.commit()
     finally:
         release_db(conn)
@@ -359,6 +497,7 @@ def reject_withdraw(call):
         )
     except Exception:
         pass
+
 
 # --- QOLGAN FUNKSIYALAR ---
 
@@ -384,11 +523,13 @@ def daily_bonus_handler(message):
 
             bonus_amount = random.randint(500, 5000)
             cursor.execute('UPDATE users SET balance = balance + %s, last_bonus = %s WHERE user_id = %s;', (bonus_amount, now, user_id))
+            log_transaction(cursor, user_id, 'daily_bonus', bonus_amount)
             conn.commit()
 
         bot.send_message(message.chat.id, f"🎁 *Sizga {bonus_amount:,} so'm bonus berildi!*", parse_mode='Markdown')
     finally:
         release_db(conn)
+
 
 @bot.message_handler(func=lambda msg: msg.text == '🌾 Mening hayvonlarim (Fermam)')
 def show_farm(message):
@@ -430,6 +571,7 @@ def show_farm(message):
     finally:
         release_db(conn)
 
+
 @bot.callback_query_handler(func=lambda call: call.data == 'collect_income')
 def collect_income(call):
     user_id = call.from_user.id
@@ -453,6 +595,7 @@ def collect_income(call):
 
             if total_uncollected > 0:
                 cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (total_uncollected, user_id))
+                log_transaction(cursor, user_id, 'harvest', total_uncollected)
                 conn.commit()
                 bot.answer_callback_query(call.id, f"✅ {total_uncollected:,} so'm o'tkazildi!", show_alert=True)
                 bot.edit_message_text(f"🎉 *Barcha daromadlar yig'ildi:* {total_uncollected:,} so'm", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
@@ -460,6 +603,7 @@ def collect_income(call):
                 bot.answer_callback_query(call.id, "⚠️ Hozircha daromad yo'q!", show_alert=True)
     finally:
         release_db(conn)
+
 
 @bot.message_handler(func=lambda msg: msg.text == '👤 Profil')
 def show_profile(message):
@@ -474,36 +618,176 @@ def show_profile(message):
     )
     bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
+
 @bot.message_handler(func=lambda msg: msg.text == '🔗 Referal')
 def show_ref(message):
     username = BOT_USERNAME or bot.get_me().username
     ref_link = f'https://t.me/{username}?start=r{message.from_user.id}'
     bot.send_message(message.chat.id, f"Sizning referal havolangiz:\n{ref_link}")
 
+
+# --- PUL KIRITISH TIZIMI ---
+
 @bot.message_handler(func=lambda msg: msg.text == '💸 Pul kiritish')
 def deposit_start(message):
-    text = f"💸 *Quyidagi kartaga to'lov qiling:*\n\n💳 `{CARD_NUMBER}`"
-    markup = types.InlineKeyboardMarkup()
-    markup.row(types.InlineKeyboardButton("✅ To'lovni amalga oshirdim", callback_data='pay_done'))
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data == 'pay_done')
-def pay_done_callback(call):
-    set_user_state(call.from_user.id, 'waiting_for_check')
+    set_user_state(message.from_user.id, 'waiting_for_deposit_amount')
+    text = (
+        f"💸 *Quyidagi kartalardan biriga to'lov qiling:*\n\n"
+        f"💳 `{CARD_NUMBER_1}`\n"
+        f"💳 `{CARD_NUMBER_2}`\n"
+        f"👤 Karta egasi: *{CARD_OWNER}*\n\n"
+        f"Iltimos, avval to'lov qilmoqchi bo'lgan summangizni kiriting (faqat raqam, masalan: `50000`)."
+    )
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row('⬅️ Ortga qaytish')
-    bot.send_message(call.message.chat.id, "👨‍💼 *To'lov chekini yuboring.*", parse_mode='Markdown', reply_markup=markup)
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=markup)
 
-@bot.message_handler(content_types=['photo', 'document'], func=lambda msg: get_user_state(msg.from_user.id) == 'waiting_for_check')
+
+@bot.message_handler(func=lambda msg: get_user_state(msg.from_user.id) == 'waiting_for_deposit_amount')
+def handle_deposit_amount(message):
+    text = message.text.strip() if message.text else ''
+    if not text.isdigit() or int(text) <= 0:
+        bot.send_message(message.chat.id, "⚠️ *Iltimos, faqat musbat raqam kiriting.* Masalan: `50000`", parse_mode='Markdown')
+        return
+
+    amount = int(text)
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                'INSERT INTO deposit_requests (user_id, amount, status, created_at) VALUES (%s, %s, %s, %s) RETURNING id;',
+                (message.from_user.id, amount, 'awaiting_check', int(time.time()))
+            )
+            request_id = cursor.fetchone()[0]
+            conn.commit()
+    finally:
+        release_db(conn)
+
+    set_user_state(message.from_user.id, f'waiting_for_check_{request_id}')
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('⬅️ Ortga qaytish')
+    bot.send_message(message.chat.id, "📷 *Endi to'lov chekini (rasm yoki fayl) yuboring.*", parse_mode='Markdown', reply_markup=markup)
+
+
+@bot.message_handler(content_types=['photo', 'document'],
+                      func=lambda msg: (get_user_state(msg.from_user.id) or '').startswith('waiting_for_check_'))
 def handle_check_upload(message):
+    state = get_user_state(message.from_user.id)
+    request_id = int(state.split('_')[-1])
+    file_id = message.photo[-1].file_id if message.photo else message.document.file_id
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE deposit_requests SET file_id = %s, status = 'pending' WHERE id = %s RETURNING amount;",
+                (file_id, request_id)
+            )
+            row = cursor.fetchone()
+            amount = row[0] if row else 0
+            conn.commit()
+    finally:
+        release_db(conn)
+
     set_user_state(message.from_user.id, None)
-    bot.send_message(message.chat.id, "✅ *Chek qabul qilindi.*", reply_markup=get_main_menu(), parse_mode='Markdown')
-    if message.photo:
-        bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=f"ID: `{message.from_user.id}`")
+    bot.send_message(message.chat.id, "✅ *Chek qabul qilindi.* Admin tez orada tasdiqlaydi.", reply_markup=get_main_menu(), parse_mode='Markdown')
+
+    try:
+        markup = types.InlineKeyboardMarkup()
+        markup.row(
+            types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"approve_d_{request_id}"),
+            types.InlineKeyboardButton("❌ Rad etish", callback_data=f"reject_d_{request_id}")
+        )
+        caption = f"💸 *Yangi to'lov cheki!* (ID: {request_id})\n\n👤 ID: `{message.from_user.id}`\n💰 Da'vo qilingan summa: *{amount:,} so'm*"
+        if message.photo:
+            bot.send_photo(ADMIN_ID, file_id, caption=caption, parse_mode='Markdown', reply_markup=markup)
+        else:
+            bot.send_document(ADMIN_ID, file_id, caption=caption, parse_mode='Markdown', reply_markup=markup)
+    except Exception:
+        pass
+
+
+# XATO EDI: 'waiting_for_check' holatida foydalanuvchi rasm/fayl o'rniga
+# matn yuborsa, hech qanday handler ushlamasdi va u "qotib qolardi".
+# Endi bunday holatda foydalanuvchiga tushuntirish beriladi.
+@bot.message_handler(func=lambda msg: (get_user_state(msg.from_user.id) or '').startswith('waiting_for_check_'))
+def handle_check_wrong_type(message):
+    bot.send_message(message.chat.id, "⚠️ *Iltimos, chekni rasm yoki fayl sifatida yuboring.*", parse_mode='Markdown')
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('approve_d_'))
+def approve_deposit(call):
+    if call.from_user.id != ADMIN_ID:
+        return
+
+    request_id = int(call.data.split('_')[2])
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE deposit_requests SET status = 'approved' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
+                (request_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
+                return
+            user_id, amount = row
+            cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (amount, user_id))
+            log_transaction(cursor, user_id, 'deposit_approved', amount)
+            conn.commit()
+    finally:
+        release_db(conn)
+
+    try:
+        bot.edit_message_caption(f"{call.message.caption}\n\n✅ *STATUS: TASDIQLANDI*", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    except Exception:
+        pass
+
+    try:
+        bot.send_message(user_id, f"✅ *Sizning {amount:,} so'mlik to'lovingiz tasdiqlandi va balansingizga qo'shildi!*", parse_mode='Markdown')
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('reject_d_'))
+def reject_deposit(call):
+    if call.from_user.id != ADMIN_ID:
+        return
+
+    request_id = int(call.data.split('_')[2])
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE deposit_requests SET status = 'rejected' WHERE id = %s AND status = 'pending' RETURNING user_id, amount;",
+                (request_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                bot.answer_callback_query(call.id, "⚠️ Bu so'rov allaqachon ko'rib chiqilgan!", show_alert=True)
+                return
+            user_id, amount = row
+    finally:
+        release_db(conn)
+
+    try:
+        bot.edit_message_caption(f"{call.message.caption}\n\n❌ *STATUS: RAD ETILDI*", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    except Exception:
+        pass
+
+    try:
+        bot.send_message(user_id, f"❌ *Sizning {amount:,} so'mlik to'lov so'rovingiz rad etildi.* Savol bo'lsa admin bilan bog'laning.", parse_mode='Markdown')
+    except Exception:
+        pass
+
 
 @bot.message_handler(func=lambda msg: msg.text == '🐮 Hayvon sotib olish')
 def show_shop(message):
     bot.send_message(message.chat.id, '🛒 *Hayvonni tanlang:*', reply_markup=get_shop_inline(), parse_mode='Markdown')
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('view_'))
 def view_animal(call):
@@ -515,9 +799,11 @@ def view_animal(call):
     markup.row(types.InlineKeyboardButton('⬅️ Orqaga', callback_data='back_to_shop'))
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
+
 @bot.callback_query_handler(func=lambda call: call.data == 'back_to_shop')
 def back_shop(call):
     bot.edit_message_text('🛒 *Hayvonni tanlang:*', call.message.chat.id, call.message.message_id, reply_markup=get_shop_inline(), parse_mode='Markdown')
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
 def buy_animal(call):
@@ -537,6 +823,7 @@ def buy_animal(call):
                 return
 
             cursor.execute('INSERT INTO user_animals (user_id, animal_key, buy_time, last_harvest) VALUES (%s, %s, %s, %s);', (user_id, key, now, now))
+            log_transaction(cursor, user_id, f'buy_{key}', -item['price'])
 
             cursor.execute('SELECT referrer_id FROM users WHERE user_id = %s;', (user_id,))
             ref_row = cursor.fetchone()
@@ -544,6 +831,7 @@ def buy_animal(call):
                 ref_id = ref_row[0]
                 bonus = int(item['price'] * 0.10)
                 cursor.execute('UPDATE users SET balance = balance + %s WHERE user_id = %s;', (bonus, ref_id))
+                log_transaction(cursor, ref_id, 'ref_bonus', bonus)
 
             conn.commit()
     finally:
@@ -551,6 +839,7 @@ def buy_animal(call):
 
     bot.answer_callback_query(call.id, f"✅ {item['name']} sotib olindi!", show_alert=True)
     bot.send_message(call.message.chat.id, f"🎉 *Tabriklaymiz! {item['name']} sotib olindi!*", parse_mode='Markdown')
+
 
 if __name__ == '__main__':
     init_db()
