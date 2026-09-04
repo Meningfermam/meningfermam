@@ -174,6 +174,27 @@ def get_user_animals_summary(user_id):
     finally:
         release_db(conn)
 
+def get_all_user_ids():
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT user_id FROM users;')
+            return [row[0] for row in cursor.fetchall()]
+    finally:
+        release_db(conn)
+
+def get_user_full_info(target_id):
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                'SELECT balance, referrals, referrer_id FROM users WHERE user_id = %s;',
+                (target_id,)
+            )
+            return cursor.fetchone()
+    finally:
+        release_db(conn)
+
 def get_main_menu(user_id=None):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row('🐮 Hayvon sotib olish')
@@ -181,7 +202,7 @@ def get_main_menu(user_id=None):
     markup.row('💸 Pul kiritish', '💰 Pul yechish')
     markup.row('🌾 Mening hayvonlarim (Fermam)')
     if user_id == ADMIN_ID:
-        markup.row("📋 So'rovlar")
+        markup.row("📋 So'rovlar", "📢 Xabar yuborish")
     return markup
 
 def get_shop_inline():
@@ -362,6 +383,31 @@ def admin_add_balance(message):
             pass
     finally:
         release_db(conn)
+
+@bot.message_handler(commands=['balance'])
+def admin_check_balance(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        bot.send_message(message.chat.id, "⚠️ Foydalanish: `/balance USER_ID`\nMasalan: `/balance 123456789`", parse_mode='Markdown')
+        return
+    target_id = int(args[1])
+    info = get_user_full_info(target_id)
+    if not info:
+        bot.send_message(message.chat.id, "❌ Bunday foydalanuvchi topilmadi!", parse_mode='Markdown')
+        return
+    balance, referrals, referrer_id = info
+    animals_text = get_user_animals_summary(target_id)
+    text = (
+        f"👤 *Foydalanuvchi ma'lumoti:*\n\n"
+        f"🆔 ID: `{target_id}`\n"
+        f"💰 Balans: *{balance:,} so'm*\n"
+        f"👥 Takliflar: {referrals} ta\n"
+        f"🔗 Kim taklif qilgan: {f'`{referrer_id}`' if referrer_id else \"Yo'q\"}\n"
+        f"🌾 Hayvonlar: {animals_text}"
+    )
+    bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
 def _send_pending_requests(chat_id):
     conn = get_db()
@@ -925,6 +971,51 @@ def buy_animal(call):
 
     bot.answer_callback_query(call.id, f"✅ {item['name']} sotib olindi!", show_alert=True)
     bot.send_message(call.message.chat.id, f"🎉 *Tabriklaymiz! {item['name']} sotib olindi!*", parse_mode='Markdown')
+
+@bot.message_handler(func=lambda msg: msg.text == '📢 Xabar yuborish')
+def broadcast_start(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    set_user_state(message.from_user.id, 'waiting_for_broadcast')
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row('⬅️ Ortga qaytish')
+    bot.send_message(
+        message.chat.id,
+        "📢 *Hammaga yubormoqchi bo'lgan xabaringizni yuboring.*\n(matn, rasm, video — hammasi bo'ladi)",
+        parse_mode='Markdown',
+        reply_markup=markup
+    )
+
+@bot.message_handler(
+    content_types=['text', 'photo', 'video', 'document', 'audio', 'voice', 'animation', 'sticker', 'video_note'],
+    func=lambda msg: msg.from_user.id == ADMIN_ID and get_user_state(msg.from_user.id) == 'waiting_for_broadcast'
+)
+def broadcast_send(message):
+    if message.text == '⬅️ Ortga qaytish':
+        set_user_state(message.from_user.id, None)
+        bot.send_message(message.chat.id, '▪️ *Bekor qilindi.*', reply_markup=get_main_menu(message.from_user.id), parse_mode='Markdown')
+        return
+
+    set_user_state(message.from_user.id, None)
+    users = get_all_user_ids()
+    bot.send_message(message.chat.id, f"⏳ *Yuborish boshlandi...* ({len(users)} ta foydalanuvchi)", parse_mode='Markdown')
+
+    success = 0
+    failed = 0
+    for user_id in users:
+        try:
+            bot.copy_message(user_id, message.chat.id, message.message_id)
+            success += 1
+        except Exception:
+            failed += 1
+        time.sleep(0.05)
+
+    bot.send_message(
+        message.chat.id,
+        f"✅ *Xabar yuborildi!*\n\n📤 Muvaffaqiyatli: {success} ta\n❌ Yuborilmadi: {failed} ta",
+        reply_markup=get_main_menu(message.from_user.id),
+        parse_mode='Markdown'
+    )
 
 if __name__ == '__main__':
     init_db()
