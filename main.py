@@ -399,12 +399,13 @@ def admin_check_balance(message):
         return
     balance, referrals, referrer_id = info
     animals_text = get_user_animals_summary(target_id)
+    referrer_text = f"`{referrer_id}`" if referrer_id else "Yo'q"
     text = (
         f"👤 *Foydalanuvchi ma'lumoti:*\n\n"
         f"🆔 ID: `{target_id}`\n"
         f"💰 Balans: *{balance:,} so'm*\n"
         f"👥 Takliflar: {referrals} ta\n"
-        f"🔗 Kim taklif qilgan: {f'`{referrer_id}`' if referrer_id else \"Yo'q\"}\n"
+        f"🔗 Kim taklif qilgan: {referrer_text}\n"
         f"🌾 Hayvonlar: {animals_text}"
     )
     bot.send_message(message.chat.id, text, parse_mode='Markdown')
